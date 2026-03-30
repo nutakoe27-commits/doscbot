@@ -196,6 +196,12 @@ class Database
         return $stmt->fetchAll();
     }
 
+    public function getAllRegisteredTelegramIds(): array
+    {
+        $stmt = $this->pdo->query('SELECT telegram_id FROM users WHERE full_name IS NOT NULL AND full_name != ""');
+        return $stmt->fetchAll(\PDO::FETCH_COLUMN);
+    }
+
     // ── Admin Stats ──
 
     public function getAdminStats(): array

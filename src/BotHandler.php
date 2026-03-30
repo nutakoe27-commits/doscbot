@@ -99,6 +99,10 @@ class BotHandler
             $this->adminHandler->handleAdmin($chatId, $telegramId);
             return;
         }
+        if ($text === '/broadcast') {
+            $this->adminHandler->handleBroadcastStart($chatId, $telegramId);
+            return;
+        }
 
         // State-based input
         $stateRow = $this->db->getState($telegramId);
@@ -264,6 +268,21 @@ class BotHandler
             return;
         }
 
+        // Broadcast callbacks
+        if ($data === 'confirm_broadcast') {
+            $this->adminHandler->handleBroadcastConfirm($chatId, $telegramId);
+            return;
+        }
+        if ($data === 'edit_broadcast') {
+            $this->adminHandler->handleBroadcastEdit($chatId, $telegramId);
+            return;
+        }
+        if ($data === 'cancel_broadcast') {
+            $this->db->clearState($telegramId);
+            $this->api->sendMessage($chatId, '❌ Рассылка отменена.');
+            return;
+        }
+
         // Subscription info
         if ($data === 'subscription_info') {
             $this->showSubscriptionInfo($chatId, $user);
@@ -372,6 +391,12 @@ class BotHandler
                 }
                 return;
             }
+        }
+
+        // Broadcast flow (admin)
+        if ($state === 'broadcast_text') {
+            $this->adminHandler->handleBroadcastText($chatId, $telegramId, $text);
+            return;
         }
 
         // Unknown state — reset

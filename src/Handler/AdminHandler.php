@@ -138,4 +138,102 @@ class AdminHandler
     {
         return $this->adminId;
     }
+
+    // ── Broadcast ──
+
+    /**
+     * /broadcast — начинает рассылку
+     */
+    public function handleBroadcastStart(int $chatId, int $telegramId): void
+    {
+        if (!$this->isAdmin($telegramId)) {
+            $this->api->sendMessage($chatId, 'Команда доступна только администратору.');
+            return;
+        }
+
+        $ids = $this->db->getAllRegisteredTelegramIds();
+        $count = count($ids);
+
+        $this->db->setState($telegramId, 'broadcast_text');
+        $keyboard = [
+            'inline_keyboard' => [
+                [['text' => '❌ Отмена', 'callback_data' => 'cancel_broadcast']],
+            ],
+        ];
+        $this->api->sendMessage($chatId, "✉️ Введите текст рассылки.\nПолучателей: {$count}\n\nПоддерживается HTML-разметка (<b>, <i>, <a>).", $keyboard);
+    }
+
+    /**
+     * Пользователь ввёл текст — показываем превью и кнопку подтверждения
+     */
+    public function handleBroadcastText(int $chatId, int $telegramId, string $text): void
+    {
+        $ids = $this->db->getAllRegisteredTelegramIds();
+        $count = count($ids);
+
+        $this->db->setState($telegramId, 'broadcast_confirm', ['text' => $text]);
+
+        $preview = "📨 <b>Превью рассылки:</b>\n\n{$text}\n\n—\nПолучателей: {$count}";
+
+        $keyboard = [
+            'inline_keyboard' => [
+                [
+                    ['text' => '✅ Отправить', 'callback_data' => 'confirm_broadcast'],
+                    ['text' => '✏️ Изменить', 'callback_data' => 'edit_broadcast'],
+                    ['text' => '❌ Отмена', 'callback_data' => 'cancel_broadcast'],
+                ],
+            ],
+        ];
+        $this->api->sendMessage($chatId, $preview, $keyboard, 'HTML');
+    }
+
+    /**
+     * Подтверждение — отправляем всем
+     */
+    public function handleBroadcastConfirm(int $chatId, int $telegramId): void
+    {
+        $stateRow = $this->db->getState($telegramId);
+        $data = $stateRow ? (json_decode($stateRow['data'] ?? '{}', true) ?: []) : [];
+        $text = $data['text'] ?? '';
+
+        if (!$text) {
+            $this->api->sendMessage($chatId, 'Ошибка: текст не найден.');
+            $this->db->clearState($telegramId);
+            return;
+        }
+
+        $this->db->clearState($telegramId);
+        $ids = $this->db->getAllRegisteredTelegramIds();
+        $count = count($ids);
+
+        $this->api->sendMessage($chatId, "⏳ Отправлю рассылку ({$count} пользователей)...");
+
+        $sent = 0;
+        $failed = 0;
+        foreach ($ids as $id) {
+            $result = $this->api->apiRequest('sendMessage', [
+                'chat_id'    => $id,
+                'text'       => $text,
+                'parse_mode' => 'HTML',
+            ]);
+            if ($result && ($result['ok'] ?? false)) {
+                $sent++;
+            } else {
+                $failed++;
+            }
+            // Пауза 50мс между сообщениями (лимит Telegram: 30 сообщ./сек)
+            usleep(50000);
+        }
+
+        $this->api->sendMessage($chatId, "✅ Рассылка завершена.\nДоставлено: {$sent}\nНе доставлено: {$failed}");
+    }
+
+    /**
+     * Кнопка «Изменить» — вернуться к вводу текста
+     */
+    public function handleBroadcastEdit(int $chatId, int $telegramId): void
+    {
+        $this->db->setState($telegramId, 'broadcast_text');
+        $this->api->sendMessage($chatId, 'Введите новый текст рассылки:');
+    }
 }
