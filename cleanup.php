@@ -10,6 +10,6 @@ require_once __DIR__ . '/vendor/autoload.php';
 $config = require __DIR__ . '/config.php';
 
 $bot = new \DocBot\BotHandler($config);
-$deleted = $bot->cleanupOldPdfs(30); // удалять файлы старше 30 дней
+$deleted = $bot->cleanupOldPdfs(1); // удалять файлы старше 30 дней
 
 echo date('Y-m-d H:i:s') . " — Удалено PDF: {$deleted}\n";
