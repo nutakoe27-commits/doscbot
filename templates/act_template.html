@@ -1,0 +1,104 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<style>
+    body {
+        font-family: "dejavusans", sans-serif;
+        font-size: 11pt;
+        line-height: 1.5;
+        color: #000;
+    }
+    h1 {
+        text-align: center;
+        font-size: 14pt;
+        margin-bottom: 5px;
+    }
+    h2 {
+        text-align: center;
+        font-size: 11pt;
+        font-weight: normal;
+        margin-top: 0;
+        margin-bottom: 20px;
+        color: #333;
+    }
+    .paragraph {
+        text-align: justify;
+        margin-bottom: 8px;
+    }
+    .requisites-table {
+        width: 100%;
+        border: none;
+        margin-top: 20px;
+    }
+    .requisites-table td {
+        width: 50%;
+        vertical-align: top;
+        padding: 5px 10px;
+    }
+</style>
+</head>
+<body>
+
+<h1>АКТ СДАЧИ-ПРИЁМКИ ОКАЗАННЫХ УСЛУГ № {{act_number}}</h1>
+<h2>к Договору оказания услуг № {{contract_number}} от {{contract_date}}</h2>
+<h2>г. {{city}}, {{act_date}}</h2>
+
+<p class="paragraph">
+{{executor_full_name}}, применяющий специальный налоговый режим «Налог на профессиональный доход» (самозанятый), ИНН {{executor_inn}}, именуемый в дальнейшем «<b>Исполнитель</b>», с одной стороны, и {{client_display_name}}{{client_inn_line}}, именуемый в дальнейшем «<b>Заказчик</b>», с другой стороны, совместно именуемые «Стороны», составили настоящий Акт о нижеследующем:
+</p>
+
+<p class="paragraph">
+1. Исполнитель оказал, а Заказчик принял следующие услуги по Договору № {{contract_number}} от {{contract_date}}:
+</p>
+
+<table style="width: 100%; border-collapse: collapse; margin: 10px 0;">
+<tr style="background: #f0f0f0;">
+    <th style="border: 1px solid #000; padding: 6px; width: 5%; text-align: center;">№</th>
+    <th style="border: 1px solid #000; padding: 6px; width: 65%; text-align: center;">Наименование услуги</th>
+    <th style="border: 1px solid #000; padding: 6px; width: 30%; text-align: center;">Стоимость (руб.)</th>
+</tr>
+<tr>
+    <td style="border: 1px solid #000; padding: 6px; text-align: center;">1</td>
+    <td style="border: 1px solid #000; padding: 6px;">{{service_description}}</td>
+    <td style="border: 1px solid #000; padding: 6px; text-align: right;">{{amount}}</td>
+</tr>
+<tr>
+    <td colspan="2" style="border: 1px solid #000; padding: 6px; text-align: right;"><b>Итого:</b></td>
+    <td style="border: 1px solid #000; padding: 6px; text-align: right;"><b>{{amount}}</b></td>
+</tr>
+</table>
+
+<p class="paragraph">
+Итого оказано услуг на сумму: <b>{{amount}} ({{amount_words}}) рублей</b>. НДС не облагается (Федеральный закон от 27.11.2018 № 422-ФЗ).
+</p>
+
+<p class="paragraph">
+2. Услуги оказаны в полном объёме, в установленные сроки. Стороны претензий друг к другу не имеют.
+</p>
+
+<p class="paragraph">
+3. Настоящий Акт составлен в двух экземплярах, имеющих равную юридическую силу, по одному для каждой Стороны.
+</p>
+
+<table class="requisites-table">
+<tr>
+    <td>
+        <b>Исполнитель:</b><br><br>
+        {{executor_full_name}}<br>
+        ИНН: {{executor_inn}}<br><br>
+        Подпись: _____________________<br><br>
+        / {{executor_full_name}} /
+    </td>
+    <td>
+        <b>Заказчик:</b><br><br>
+        {{client_display_name}}<br>
+        ИНН: {{client_inn}}<br><br>
+        Подпись: _____________________<br><br>
+        / {{client_signatory_name}} /
+    </td>
+</tr>
+</table>
+
+</body>
+</html>

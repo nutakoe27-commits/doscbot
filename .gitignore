@@ -1,0 +1,7 @@
+config.php
+storage/pdf/*
+!storage/pdf/.gitkeep
+.env
+*.log
+.ftp-deploy-sync-state.json
+vendor/

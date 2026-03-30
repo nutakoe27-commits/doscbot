@@ -1,0 +1,14 @@
+{
+    "name": "docbot/docbot",
+    "description": "Telegram-бот генерации документов для самозанятых",
+    "type": "project",
+    "require": {
+        "php": ">=8.1",
+        "tecnickcom/tcpdf": "^6.7"
+    },
+    "autoload": {
+        "psr-4": {
+            "DocBot\\": "src/"
+        }
+    }
+}
