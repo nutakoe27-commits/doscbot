@@ -9,6 +9,27 @@ class Database
 {
     private PDO $pdo;
 
+    /** Белый список разрешённых колонок по таблицам */
+    private const ALLOWED_COLUMNS = [
+        'users' => [
+            'full_name', 'inn', 'address', 'phone', 'email',
+            'bank_name', 'account_number', 'bik', 'corr_account',
+        ],
+        'clients' => [
+            'user_id', 'client_type', 'full_name', 'inn', 'kpp', 'ogrn', 'ogrnip',
+            'representative_title', 'representative_name', 'basis',
+            'passport_series', 'passport_number', 'passport_issued',
+            'address', 'phone', 'email', 'bank_details',
+        ],
+        'documents' => [
+            'user_id', 'client_id', 'doc_type', 'contract_number',
+            'service_description', 'amount', 'amount_words',
+            'date_start', 'date_end', 'city', 'payment_terms',
+            'payment_days', 'payment_moment', 'acceptance_days',
+            'termination_days', 'pdf_path', 'parent_contract_id',
+        ],
+    ];
+
     public function __construct(string $host, string $dbName, string $user, string $password)
     {
         $dsn = "mysql:host={$host};dbname={$dbName};charset=utf8mb4";
@@ -17,6 +38,19 @@ class Database
             PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC,
             PDO::ATTR_EMULATE_PREPARES => false,
         ]);
+    }
+
+    /**
+     * Фильтрует массив, оставляя только разрешённые колонки для таблицы.
+     */
+    private function filterColumns(array $data, string $table): array
+    {
+        $allowed = self::ALLOWED_COLUMNS[$table] ?? [];
+        return array_filter(
+            $data,
+            fn(string $key) => in_array($key, $allowed, true),
+            ARRAY_FILTER_USE_KEY
+        );
     }
 
     // ── Users ──
@@ -38,6 +72,9 @@ class Database
 
     public function updateUser(int $telegramId, array $fields): void
     {
+        $fields = $this->filterColumns($fields, 'users');
+        if (empty($fields)) return;
+
         $sets = [];
         $values = [];
         foreach ($fields as $col => $val) {
@@ -69,6 +106,7 @@ class Database
 
     public function createClient(array $data): int
     {
+        $data = $this->filterColumns($data, 'clients');
         $cols = array_keys($data);
         $placeholders = array_fill(0, count($cols), '?');
         $sql = 'INSERT INTO clients (`' . implode('`, `', $cols) . '`) VALUES (' . implode(', ', $placeholders) . ')';
@@ -103,6 +141,7 @@ class Database
 
     public function createDocument(array $data): int
     {
+        $data = $this->filterColumns($data, 'documents');
         $cols = array_keys($data);
         $placeholders = array_fill(0, count($cols), '?');
         $sql = 'INSERT INTO documents (`' . implode('`, `', $cols) . '`) VALUES (' . implode(', ', $placeholders) . ')';

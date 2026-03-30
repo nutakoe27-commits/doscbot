@@ -69,6 +69,7 @@ https://api.telegram.org/bot<YOUR_TOKEN>/setWebhook?url=https://your-domain.ru/i
 
 ```
 index.php              — точка входа (webhook)
+cleanup.php            — очистка старых PDF (для cron)
 config.php             — конфигурация (не в git)
 config.example.php     — шаблон конфига
 composer.json          — зависимости
@@ -92,6 +93,7 @@ storage/
 | `/start` | Начало работы / регистрация |
 | `/menu` | Главное меню |
 | `/mydata` | Просмотр/редактирование реквизитов |
+| `/cancel` | Отменить текущее действие |
 | `/help` | Справка |
 
 ## Главное меню
@@ -115,6 +117,14 @@ storage/
 - `FTP_SERVER`
 - `FTP_USERNAME`
 - `FTP_PASSWORD`
+
+## Очистка старых PDF
+
+Для автоматического удаления PDF старше 30 дней добавьте в cron:
+
+```
+0 3 * * * php /путь/к/проекту/cleanup.php
+```
 
 ## Лицензия
 

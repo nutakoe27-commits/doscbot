@@ -8,11 +8,13 @@ class BotHandler
     private PdfGenerator $pdf;
     private string $token;
     private string $storageDir;
+    private bool $sslVerify;
 
     public function __construct(array $config)
     {
         $this->token = $config['bot_token'];
         $this->storageDir = rtrim($config['pdf_storage'], '/');
+        $this->sslVerify = $config['ssl_verify'] ?? false;
         $this->db = new Database($config['db_host'], $config['db_name'], $config['db_user'], $config['db_password']);
         $this->pdf = new PdfGenerator(__DIR__ . '/../templates', $this->storageDir);
     }
@@ -44,6 +46,10 @@ class BotHandler
         }
         if ($text === '/mydata') {
             $this->handleMyData($chatId, $telegramId);
+            return;
+        }
+        if ($text === '/cancel') {
+            $this->handleCancel($chatId, $telegramId);
             return;
         }
         if ($text === '/menu') {
@@ -217,6 +223,13 @@ class BotHandler
 
         if (isset($regStates[$state])) {
             $info = $regStates[$state];
+
+            // Валидация ИНН при регистрации
+            if ($info['field'] === 'inn' && !$this->validateInn($text)) {
+                $this->sendMessage($chatId, '⚠️ ИНН должен содержать 10 или 12 цифр. Попробуйте ещё раз:');
+                return;
+            }
+
             $this->db->updateUser($telegramId, [$info['field'] => $text]);
 
             if ($info['next']) {
@@ -332,6 +345,7 @@ class BotHandler
             . "/start — начать работу / главное меню\n"
             . "/menu — главное меню\n"
             . "/mydata — посмотреть/изменить свои реквизиты\n"
+            . "/cancel — отменить текущее действие\n"
             . "/help — эта справка\n\n"
             . "НДС не облагается (422-ФЗ).\n"
             . "Обмен сканами через Telegram имеет юридическую силу (п. 7.3 договора).";
@@ -402,6 +416,7 @@ class BotHandler
             'fiz' => 'ФИО клиента',
             'ip'  => 'ФИО индивидуального предпринимателя',
             'org' => 'Название организации',
+            default => 'ФИО клиента',
         };
         $this->sendMessage($chatId, "Введите {$label}:");
     }
@@ -454,6 +469,13 @@ class BotHandler
         }
 
         $step = $flow[$state];
+
+        // Валидация ИНН клиента
+        if ($step['key'] === 'inn' && !$this->validateInn($text)) {
+            $this->sendMessage($chatId, '⚠️ ИНН должен содержать 10 или 12 цифр. Попробуйте ещё раз:');
+            return;
+        }
+
         $value = ($text === '-') ? '' : $text;
         $data[$step['key']] = $value;
 
@@ -778,10 +800,11 @@ class BotHandler
             CURLOPT_POST           => true,
             CURLOPT_POSTFIELDS     => $post,
             CURLOPT_RETURNTRANSFER => true,
-            CURLOPT_SSL_VERIFYPEER => false,
+            CURLOPT_SSL_VERIFYPEER => $this->sslVerify,
             CURLOPT_TIMEOUT        => 30,
         ]);
-        curl_exec($ch);
+        $result = curl_exec($ch);
+        $this->logApiResult('sendDocument', $result, $ch);
         curl_close($ch);
     }
 
@@ -800,13 +823,75 @@ class BotHandler
             CURLOPT_POST           => true,
             CURLOPT_POSTFIELDS     => http_build_query($params),
             CURLOPT_RETURNTRANSFER => true,
-            CURLOPT_SSL_VERIFYPEER => false,
+            CURLOPT_SSL_VERIFYPEER => $this->sslVerify,
             CURLOPT_TIMEOUT        => 15,
         ]);
         $result = curl_exec($ch);
+        $this->logApiResult($method, $result, $ch);
         curl_close($ch);
 
         return $result ? json_decode($result, true) : null;
+    }
+
+    private function logApiResult(string $method, string|false $result, \CurlHandle $ch): void
+    {
+        if ($result === false) {
+            error_log('[DocBot] cURL error in ' . $method . ': ' . curl_error($ch));
+            return;
+        }
+        $decoded = json_decode($result, true);
+        if (is_array($decoded) && isset($decoded['ok']) && $decoded['ok'] === false) {
+            $desc = $decoded['description'] ?? 'unknown error';
+            $code = $decoded['error_code'] ?? 0;
+            error_log("[DocBot] Telegram API error in {$method}: [{$code}] {$desc}");
+        }
+    }
+
+    // ── /cancel ──
+
+    private function handleCancel(int $chatId, int $telegramId): void
+    {
+        $stateRow = $this->db->getState($telegramId);
+        if ($stateRow && $stateRow['state']) {
+            $this->db->clearState($telegramId);
+            $this->sendMessage($chatId, '❌ Действие отменено.');
+        } else {
+            $this->sendMessage($chatId, 'Нечего отменять.');
+        }
+        $user = $this->db->getUserByTelegramId($telegramId);
+        if ($user && $user['full_name']) {
+            $this->showMainMenu($chatId);
+        }
+    }
+
+    // ── PDF cleanup ──
+
+    /**
+     * Удаляет PDF-файлы старше $days дней.
+     * Вызывать через cron: php cleanup.php
+     */
+    public function cleanupOldPdfs(int $days = 30): int
+    {
+        $deleted = 0;
+        $threshold = time() - ($days * 86400);
+        $dir = $this->storageDir;
+
+        if (!is_dir($dir)) return 0;
+
+        foreach (glob($dir . '/*.pdf') as $file) {
+            if (filemtime($file) < $threshold) {
+                unlink($file);
+                $deleted++;
+            }
+        }
+        return $deleted;
+    }
+
+    // ── Validation ──
+
+    private function validateInn(string $inn): bool
+    {
+        return (bool) preg_match('/^\d{10}(\d{2})?$/', $inn);
     }
 
     // ── Helpers ──
