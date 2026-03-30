@@ -115,6 +115,19 @@ class Database
         return (int) $this->pdo->lastInsertId();
     }
 
+    public function deleteClient(int $clientId): void
+    {
+        $stmt = $this->pdo->prepare('DELETE FROM clients WHERE id = ?');
+        $stmt->execute([$clientId]);
+    }
+
+    public function countDocumentsByClientId(int $clientId): int
+    {
+        $stmt = $this->pdo->prepare('SELECT COUNT(*) FROM documents WHERE client_id = ?');
+        $stmt->execute([$clientId]);
+        return (int) $stmt->fetchColumn();
+    }
+
     // ── Documents ──
 
     public function getDocumentsByUserId(int $userId, string $docType = null): array
@@ -157,6 +170,30 @@ class Database
         );
         $stmt->execute([$userId, $docType]);
         return (int) $stmt->fetchColumn();
+    }
+
+    public function countDocumentsThisMonth(int $userId): int
+    {
+        $stmt = $this->pdo->prepare(
+            'SELECT COUNT(*) FROM documents WHERE user_id = ? AND YEAR(created_at) = YEAR(CURDATE()) AND MONTH(created_at) = MONTH(CURDATE())'
+        );
+        $stmt->execute([$userId]);
+        return (int) $stmt->fetchColumn();
+    }
+
+    // ── Contract expiry ──
+
+    public function getExpiringContracts(int $daysAhead = 3): array
+    {
+        $stmt = $this->pdo->prepare(
+            'SELECT d.*, c.full_name AS client_name, u.telegram_id '
+            . 'FROM documents d '
+            . 'JOIN clients c ON d.client_id = c.id '
+            . 'JOIN users u ON d.user_id = u.id '
+            . 'WHERE d.doc_type = ? AND d.date_end BETWEEN CURDATE() AND DATE_ADD(CURDATE(), INTERVAL ? DAY)'
+        );
+        $stmt->execute(['contract', $daysAhead]);
+        return $stmt->fetchAll();
     }
 
     // ── User States ──

@@ -67,3 +67,6 @@ CREATE TABLE IF NOT EXISTS `user_states` (
     `data` JSON DEFAULT NULL,
     `updated_at` DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- Migration: add subscription
+ALTER TABLE `users` ADD COLUMN `subscription_status` ENUM('free', 'paid') NOT NULL DEFAULT 'free' AFTER `corr_account`;
