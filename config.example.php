@@ -13,4 +13,8 @@ return [
     // false — для shared-хостинга (SpaceWeb)
     // true  — для VDS и выделенных серверов (рекомендуется)
     'ssl_verify'  => false,
+
+    // Telegram ID администратора (для /admin и ежедневных отчётов)
+    // Узнать свой ID: напиши @userinfobot в Telegram
+    'admin_telegram_id' => 0,
 ];

@@ -91,6 +91,7 @@ src/
     ActHandler.php          — создание актов
     ClientHandler.php       — управление клиентами
     ExportHandler.php       — экспорт в CSV
+    AdminHandler.php        — статистика для админа
 templates/
   contract_service_template.html — шаблон договора
   act_template.html              — шаблон акта
@@ -108,6 +109,7 @@ storage/
 | `/mydata` | Просмотр/редактирование реквизитов |
 | `/export` | Экспорт всех документов в CSV |
 | `/cancel` | Отменить текущее действие |
+| `/admin` | Статистика (только админ) |
 | `/help` | Справка |
 
 ## Главное меню
@@ -133,6 +135,19 @@ storage/
 - `FTP_SERVER`
 - `FTP_USERNAME`
 - `FTP_PASSWORD`
+
+## Cron-задачи
+
+```
+# Ежедневный отчёт админу в 9:00
+0 9 * * * php /путь/к/проекту/admin_report.php
+
+# Уведомления об истекающих договорах в 9:30
+30 9 * * * php /путь/к/проекту/notify_expiry.php
+
+# Очистка старых PDF в 3:00
+0 3 * * * php /путь/к/проекту/cleanup.php
+```
 
 ## Очистка старых PDF
 

@@ -196,6 +196,84 @@ class Database
         return $stmt->fetchAll();
     }
 
+    // ── Admin Stats ──
+
+    public function getAdminStats(): array
+    {
+        $stats = [];
+
+        // Общее количество пользователей
+        $stats['total_users'] = (int) $this->pdo->query('SELECT COUNT(*) FROM users')->fetchColumn();
+
+        // Зарегистрированные (заполнили реквизиты)
+        $stats['registered_users'] = (int) $this->pdo->query('SELECT COUNT(*) FROM users WHERE full_name IS NOT NULL AND full_name != ""')->fetchColumn();
+
+        // Новые за 7 дней
+        $stats['new_users_7d'] = (int) $this->pdo->query('SELECT COUNT(*) FROM users WHERE created_at >= DATE_SUB(CURDATE(), INTERVAL 7 DAY)')->fetchColumn();
+
+        // Новые за 24 часа
+        $stats['new_users_24h'] = (int) $this->pdo->query('SELECT COUNT(*) FROM users WHERE created_at >= DATE_SUB(NOW(), INTERVAL 24 HOUR)')->fetchColumn();
+
+        // Документы: сегодня
+        $stats['docs_today'] = (int) $this->pdo->query('SELECT COUNT(*) FROM documents WHERE DATE(created_at) = CURDATE()')->fetchColumn();
+
+        // Документы: за 7 дней
+        $stats['docs_7d'] = (int) $this->pdo->query('SELECT COUNT(*) FROM documents WHERE created_at >= DATE_SUB(CURDATE(), INTERVAL 7 DAY)')->fetchColumn();
+
+        // Документы: за 30 дней
+        $stats['docs_30d'] = (int) $this->pdo->query('SELECT COUNT(*) FROM documents WHERE created_at >= DATE_SUB(CURDATE(), INTERVAL 30 DAY)')->fetchColumn();
+
+        // Документы: всего
+        $stats['docs_total'] = (int) $this->pdo->query('SELECT COUNT(*) FROM documents')->fetchColumn();
+
+        // Договоры vs акты
+        $stats['contracts_total'] = (int) $this->pdo->query('SELECT COUNT(*) FROM documents WHERE doc_type = "contract"')->fetchColumn();
+        $stats['acts_total'] = (int) $this->pdo->query('SELECT COUNT(*) FROM documents WHERE doc_type = "act"')->fetchColumn();
+
+        // Активные пользователи за 7 дней (создавали документы)
+        $stats['active_7d'] = (int) $this->pdo->query('SELECT COUNT(DISTINCT user_id) FROM documents WHERE created_at >= DATE_SUB(CURDATE(), INTERVAL 7 DAY)')->fetchColumn();
+
+        // Free vs Paid
+        $stats['free_users'] = (int) $this->pdo->query('SELECT COUNT(*) FROM users WHERE subscription_status = "free" AND full_name IS NOT NULL')->fetchColumn();
+        $stats['paid_users'] = (int) $this->pdo->query('SELECT COUNT(*) FROM users WHERE subscription_status = "paid"')->fetchColumn();
+
+        // Клиентов всего
+        $stats['clients_total'] = (int) $this->pdo->query('SELECT COUNT(*) FROM clients')->fetchColumn();
+
+        // Общая сумма договоров
+        $stats['total_amount'] = (float) ($this->pdo->query('SELECT COALESCE(SUM(amount), 0) FROM documents WHERE doc_type = "contract"')->fetchColumn());
+
+        return $stats;
+    }
+
+    public function getTopUsers(int $limit = 5): array
+    {
+        $stmt = $this->pdo->prepare(
+            'SELECT u.full_name, u.telegram_id, COUNT(d.id) AS doc_count, '
+            . 'COALESCE(SUM(d.amount), 0) AS total_amount '
+            . 'FROM users u '
+            . 'JOIN documents d ON d.user_id = u.id '
+            . 'GROUP BY u.id '
+            . 'ORDER BY doc_count DESC '
+            . 'LIMIT ?'
+        );
+        $stmt->execute([$limit]);
+        return $stmt->fetchAll();
+    }
+
+    public function getDocsPerDay(int $days = 7): array
+    {
+        $stmt = $this->pdo->prepare(
+            'SELECT DATE(created_at) AS day, COUNT(*) AS cnt '
+            . 'FROM documents '
+            . 'WHERE created_at >= DATE_SUB(CURDATE(), INTERVAL ? DAY) '
+            . 'GROUP BY DATE(created_at) '
+            . 'ORDER BY day'
+        );
+        $stmt->execute([$days]);
+        return $stmt->fetchAll();
+    }
+
     // ── User States ──
 
     public function getState(int $telegramId): ?array

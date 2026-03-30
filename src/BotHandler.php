@@ -7,6 +7,7 @@ use DocBot\Handler\ContractHandler;
 use DocBot\Handler\ActHandler;
 use DocBot\Handler\ClientHandler;
 use DocBot\Handler\ExportHandler;
+use DocBot\Handler\AdminHandler;
 
 class BotHandler
 {
@@ -20,11 +21,13 @@ class BotHandler
     private ActHandler $actHandler;
     private ClientHandler $clientHandler;
     private ExportHandler $exportHandler;
+    private AdminHandler $adminHandler;
 
     public function __construct(array $config)
     {
         $this->storageDir = rtrim($config['pdf_storage'], '/');
         $sslVerify = $config['ssl_verify'] ?? false;
+        $adminId = $config['admin_telegram_id'] ?? 0;
         $this->db = new Database($config['db_host'], $config['db_name'], $config['db_user'], $config['db_password']);
         $this->pdf = new PdfGenerator(__DIR__ . '/../templates', $this->storageDir);
         $this->api = new TelegramApi($config['bot_token'], $sslVerify);
@@ -34,6 +37,7 @@ class BotHandler
         $this->actHandler = new ActHandler($this->db, $this->api, $this->pdf);
         $this->clientHandler = new ClientHandler($this->db, $this->api);
         $this->exportHandler = new ExportHandler($this->db, $this->api, $this->storageDir);
+        $this->adminHandler = new AdminHandler($this->db, $this->api, $adminId);
     }
 
     public function handle(array $update): void
@@ -89,6 +93,10 @@ class BotHandler
         }
         if ($text === '/export') {
             $this->exportHandler->handleExport($chatId, $telegramId);
+            return;
+        }
+        if ($text === '/admin') {
+            $this->adminHandler->handleAdmin($chatId, $telegramId);
             return;
         }
 
@@ -247,6 +255,12 @@ class BotHandler
         // Export
         if ($data === 'export_docs') {
             $this->exportHandler->handleExport($chatId, $telegramId);
+            return;
+        }
+
+        // Admin refresh
+        if ($data === 'admin_refresh') {
+            $this->adminHandler->handleAdmin($chatId, $telegramId);
             return;
         }
 
