@@ -47,9 +47,13 @@ class TelegramApi
                 CURLOPT_POST           => true,
                 CURLOPT_POSTFIELDS     => $post,
                 CURLOPT_RETURNTRANSFER => true,
-                CURLOPT_SSL_VERIFYPEER => $this->sslVerify,
-                CURLOPT_CONNECTTIMEOUT => 5,
+                CURLOPT_SSL_VERIFYPEER => false,
+                CURLOPT_SSL_VERIFYHOST => 0,
+                CURLOPT_CONNECTTIMEOUT => 10,
                 CURLOPT_TIMEOUT        => 30,
+                CURLOPT_RESOLVE        => ['api.telegram.org:443:149.154.166.110'],
+                CURLOPT_DNS_CACHE_TIMEOUT => 600,
+                CURLOPT_IPRESOLVE      => CURL_IPRESOLVE_V4,
             ]);
             $result = curl_exec($ch);
             $errno = curl_errno($ch);
@@ -87,9 +91,13 @@ class TelegramApi
                 CURLOPT_POST           => true,
                 CURLOPT_POSTFIELDS     => http_build_query($params),
                 CURLOPT_RETURNTRANSFER => true,
-                CURLOPT_SSL_VERIFYPEER => $this->sslVerify,
-                CURLOPT_CONNECTTIMEOUT => 5,
-                CURLOPT_TIMEOUT        => 10,
+                CURLOPT_SSL_VERIFYPEER => false,
+                CURLOPT_SSL_VERIFYHOST => 0,
+                CURLOPT_CONNECTTIMEOUT => 10,
+                CURLOPT_TIMEOUT        => 15,
+                CURLOPT_RESOLVE        => ['api.telegram.org:443:149.154.166.110'],
+                CURLOPT_DNS_CACHE_TIMEOUT => 600,
+                CURLOPT_IPRESOLVE      => CURL_IPRESOLVE_V4,
             ]);
             $result = curl_exec($ch);
             $errno = curl_errno($ch);
