@@ -40,18 +40,35 @@ class TelegramApi
             $post['caption'] = $caption;
         }
 
-        $ch = curl_init();
-        curl_setopt_array($ch, [
-            CURLOPT_URL            => $url,
-            CURLOPT_POST           => true,
-            CURLOPT_POSTFIELDS     => $post,
-            CURLOPT_RETURNTRANSFER => true,
-            CURLOPT_SSL_VERIFYPEER => $this->sslVerify,
-            CURLOPT_TIMEOUT        => 30,
-        ]);
-        $result = curl_exec($ch);
-        $this->logApiResult('sendDocument', $result, $ch);
-        curl_close($ch);
+        for ($attempt = 1; $attempt <= 3; $attempt++) {
+            $ch = curl_init();
+            curl_setopt_array($ch, [
+                CURLOPT_URL            => $url,
+                CURLOPT_POST           => true,
+                CURLOPT_POSTFIELDS     => $post,
+                CURLOPT_RETURNTRANSFER => true,
+                CURLOPT_SSL_VERIFYPEER => $this->sslVerify,
+                CURLOPT_CONNECTTIMEOUT => 5,
+                CURLOPT_TIMEOUT        => 30,
+            ]);
+            $result = curl_exec($ch);
+            $errno = curl_errno($ch);
+
+            if ($result !== false && $errno === 0) {
+                $this->logApiResult('sendDocument', $result, $ch);
+                curl_close($ch);
+                return;
+            }
+
+            if ($attempt < 3) {
+                error_log("[DocBot] sendDocument retry {$attempt}/3: " . curl_error($ch));
+                curl_close($ch);
+                usleep(500000);
+            } else {
+                $this->logApiResult('sendDocument', $result, $ch);
+                curl_close($ch);
+            }
+        }
     }
 
     public function answerCallback(string $callbackId): void
@@ -59,24 +76,42 @@ class TelegramApi
         $this->apiRequest('answerCallbackQuery', ['callback_query_id' => $callbackId]);
     }
 
-    public function apiRequest(string $method, array $params): ?array
+    public function apiRequest(string $method, array $params, int $maxRetries = 3): ?array
     {
         $url = "https://api.telegram.org/bot{$this->token}/{$method}";
 
-        $ch = curl_init();
-        curl_setopt_array($ch, [
-            CURLOPT_URL            => $url,
-            CURLOPT_POST           => true,
-            CURLOPT_POSTFIELDS     => http_build_query($params),
-            CURLOPT_RETURNTRANSFER => true,
-            CURLOPT_SSL_VERIFYPEER => $this->sslVerify,
-            CURLOPT_TIMEOUT        => 15,
-        ]);
-        $result = curl_exec($ch);
-        $this->logApiResult($method, $result, $ch);
-        curl_close($ch);
+        for ($attempt = 1; $attempt <= $maxRetries; $attempt++) {
+            $ch = curl_init();
+            curl_setopt_array($ch, [
+                CURLOPT_URL            => $url,
+                CURLOPT_POST           => true,
+                CURLOPT_POSTFIELDS     => http_build_query($params),
+                CURLOPT_RETURNTRANSFER => true,
+                CURLOPT_SSL_VERIFYPEER => $this->sslVerify,
+                CURLOPT_CONNECTTIMEOUT => 5,
+                CURLOPT_TIMEOUT        => 10,
+            ]);
+            $result = curl_exec($ch);
+            $errno = curl_errno($ch);
 
-        return $result ? json_decode($result, true) : null;
+            if ($result !== false && $errno === 0) {
+                $this->logApiResult($method, $result, $ch);
+                curl_close($ch);
+                return json_decode($result, true);
+            }
+
+            // Логируем ошибку и повторяем
+            if ($attempt < $maxRetries) {
+                error_log("[DocBot] cURL retry {$attempt}/{$maxRetries} for {$method}: " . curl_error($ch));
+                curl_close($ch);
+                usleep(500000); // 0.5 сек пауза между попытками
+            } else {
+                $this->logApiResult($method, $result, $ch);
+                curl_close($ch);
+            }
+        }
+
+        return null;
     }
 
     public function logApiResult(string $method, string|false $result, \CurlHandle $ch): void
