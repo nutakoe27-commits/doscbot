@@ -70,3 +70,6 @@ CREATE TABLE IF NOT EXISTS `user_states` (
 
 -- Migration: add subscription
 ALTER TABLE `users` ADD COLUMN `subscription_status` ENUM('free', 'paid') NOT NULL DEFAULT 'free' AFTER `corr_account`;
+
+-- Migration: 152-ФЗ — добавить поле согласия на обработку ПД
+ALTER TABLE `users` ADD COLUMN `consent_given` TINYINT(1) NOT NULL DEFAULT 0 AFTER `subscription_status`;

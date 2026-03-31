@@ -103,6 +103,10 @@ class BotHandler
             $this->adminHandler->handleBroadcastStart($chatId, $telegramId);
             return;
         }
+        if ($text === '/deletedata') {
+            $this->handleDeleteDataStart($chatId, $telegramId);
+            return;
+        }
 
         // State-based input
         $stateRow = $this->db->getState($telegramId);
@@ -126,17 +130,27 @@ class BotHandler
             return;
         }
 
-        if (!$user) {
-            $this->db->createUser($telegramId);
-        }
+        // New user — show consent screen before registration
+        $this->showConsentScreen($chatId);
+    }
 
-        $this->api->sendMessage($chatId,
-            "Добро пожаловать в DocBot! 📄\n\n" .
-            "Я помогу вам генерировать договоры и акты для самозанятых.\n\n" .
-            "Для начала нужно заполнить ваши реквизиты.\n" .
-            "Введите ваше ФИО полностью (например: Иванов Иван Иванович):"
-        );
-        $this->db->setState($telegramId, 'reg_full_name');
+    private function showConsentScreen(int $chatId): void
+    {
+        $text = "Добро пожаловать в DocBot! 📄\n\n"
+            . "Для работы бот сохраняет ваши данные (ФИО, ИНН, банковские реквизиты) на защищённом сервере в РФ.\n\n"
+            . "📄 Политика обработки ПД: https://www.krichigindocs.ru/privacy.html\n"
+            . "📄 Пользовательское соглашение: https://www.krichigindocs.ru/terms.html\n\n"
+            . "Нажимая «Принимаю», вы даёте согласие на обработку персональных данных в соответствии с 152-ФЗ.";
+
+        $keyboard = [
+            'inline_keyboard' => [
+                [
+                    ['text' => '✅ Принимаю', 'callback_data' => 'accept_consent'],
+                    ['text' => '❌ Отказываюсь', 'callback_data' => 'decline_consent'],
+                ],
+            ],
+        ];
+        $this->api->sendMessage($chatId, $text, $keyboard);
     }
 
     // ── Main menu ──
@@ -179,6 +193,25 @@ class BotHandler
                     $this->actHandler->handleDateCallback($chatId, $telegramId, $data);
                 }
             }
+            return;
+        }
+
+        // Consent callbacks (before registration check — user is not yet registered)
+        if ($data === 'accept_consent') {
+            $this->handleAcceptConsent($chatId, $telegramId);
+            return;
+        }
+        if ($data === 'decline_consent') {
+            $this->api->sendMessage($chatId,
+                'Без согласия на обработку персональных данных использование бота невозможно. '
+                . 'Вы можете передумать, нажав /start.'
+            );
+            return;
+        }
+
+        // Delete account confirmation
+        if ($data === 'confirm_delete_account') {
+            $this->handleDeleteDataConfirm($chatId, $telegramId);
             return;
         }
 
@@ -417,6 +450,7 @@ class BotHandler
             . "/menu — главное меню\n"
             . "/mydata — посмотреть/изменить свои реквизиты\n"
             . "/export — экспорт документов в CSV\n"
+            . "/deletedata — удалить все мои данные\n"
             . "/cancel — отменить текущее действие\n"
             . "/help — эта справка\n\n"
             . "Бесплатный план: до 3 документов в месяц.\n"
@@ -501,5 +535,76 @@ class BotHandler
     public function getDb(): Database
     {
         return $this->db;
+    }
+
+    // ── Consent ──
+
+    private function handleAcceptConsent(int $chatId, int $telegramId): void
+    {
+        $user = $this->db->getUserByTelegramId($telegramId);
+        if (!$user) {
+            $this->db->createUser($telegramId);
+        }
+        $this->db->setConsentGiven($telegramId);
+
+        $this->api->sendMessage($chatId,
+            "✅ Спасибо! Согласие принято.\n\n"
+            . "Для начала нужно заполнить ваши реквизиты.\n"
+            . "Введите ваше ФИО полностью (например: Иванов Иван Иванович):"
+        );
+        $this->db->setState($telegramId, 'reg_full_name');
+    }
+
+    // ── /deletedata ──
+
+    private function handleDeleteDataStart(int $chatId, int $telegramId): void
+    {
+        $user = $this->db->getUserByTelegramId($telegramId);
+        if (!$user || !$user['full_name']) {
+            $this->api->sendMessage($chatId, 'У вас нет сохранённых данных.');
+            return;
+        }
+
+        $text = "⚠️ Вы уверены? Будут удалены:\n"
+            . "- Ваши реквизиты\n"
+            . "- Все клиенты\n"
+            . "- Все документы\n"
+            . "- Сгенерированные PDF-файлы\n\n"
+            . "Это действие необратимо.";
+
+        $keyboard = [
+            'inline_keyboard' => [
+                [
+                    ['text' => '🗑 Да, удалить всё', 'callback_data' => 'confirm_delete_account'],
+                    ['text' => '❌ Отмена', 'callback_data' => 'main_menu'],
+                ],
+            ],
+        ];
+        $this->api->sendMessage($chatId, $text, $keyboard);
+    }
+
+    private function handleDeleteDataConfirm(int $chatId, int $telegramId): void
+    {
+        $user = $this->db->getUserByTelegramId($telegramId);
+        if (!$user) {
+            $this->api->sendMessage($chatId, 'У вас нет сохранённых данных.');
+            return;
+        }
+
+        // Delete PDF files from disk
+        $pdfPaths = $this->db->getUserPdfPaths($user['id']);
+        foreach ($pdfPaths as $path) {
+            $fullPath = $this->storageDir . '/' . basename($path);
+            if (file_exists($fullPath)) {
+                unlink($fullPath);
+            }
+        }
+
+        // Cascading delete from database
+        $this->db->deleteUserData($user['id'], $telegramId);
+
+        $this->api->sendMessage($chatId,
+            '✅ Все ваши данные удалены. Для повторного использования бота нажмите /start.'
+        );
     }
 }

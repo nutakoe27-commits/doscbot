@@ -280,6 +280,29 @@ class Database
         return $stmt->fetchAll();
     }
 
+    // ── Consent & Account Deletion ──
+
+    public function setConsentGiven(int $telegramId): void
+    {
+        $stmt = $this->pdo->prepare('UPDATE users SET consent_given = 1 WHERE telegram_id = ?');
+        $stmt->execute([$telegramId]);
+    }
+
+    public function getUserPdfPaths(int $userId): array
+    {
+        $stmt = $this->pdo->prepare('SELECT pdf_path FROM documents WHERE user_id = ? AND pdf_path IS NOT NULL');
+        $stmt->execute([$userId]);
+        return $stmt->fetchAll(PDO::FETCH_COLUMN);
+    }
+
+    public function deleteUserData(int $userId, int $telegramId): void
+    {
+        $this->pdo->prepare('DELETE FROM documents WHERE user_id = ?')->execute([$userId]);
+        $this->pdo->prepare('DELETE FROM clients WHERE user_id = ?')->execute([$userId]);
+        $this->pdo->prepare('DELETE FROM user_states WHERE telegram_id = ?')->execute([$telegramId]);
+        $this->pdo->prepare('DELETE FROM users WHERE telegram_id = ?')->execute([$telegramId]);
+    }
+
     // ── User States ──
 
     public function getState(int $telegramId): ?array
