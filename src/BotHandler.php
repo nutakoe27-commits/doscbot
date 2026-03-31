@@ -138,8 +138,8 @@ class BotHandler
     {
         $text = "Добро пожаловать в DocBot! 📄\n\n"
             . "Для работы бот сохраняет ваши данные (ФИО, ИНН, банковские реквизиты) на защищённом сервере в РФ.\n\n"
-            . "📄 Политика обработки ПД: https://www.krichigindocs.ru/privacy.html\n"
-            . "📄 Пользовательское соглашение: https://www.krichigindocs.ru/terms.html\n\n"
+            . "📄 Политика обработки ПД: https://www.krichigindocs.ru/public/privacy.html\n"
+            . "📄 Пользовательское соглашение: https://www.krichigindocs.ru/public/terms.html\n\n"
             . "Нажимая «Принимаю», вы даёте согласие на обработку персональных данных в соответствии с 152-ФЗ.";
 
         $keyboard = [
