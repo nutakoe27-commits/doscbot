@@ -6,4 +6,4 @@ storage/csv/*
 .env
 *.log
 .ftp-deploy-sync-state.json
-# vendor/ включён в репозиторий для деплоя на shared-хостинг без SSH
+vendor/ 
