@@ -179,9 +179,10 @@ class InvoiceHandler
         $amountWords = NumberToWords::convert((float) $contract['amount']);
 
         $invoiceData = [
-            'invoice_number' => $invoiceNumber,
-            'invoice_date'   => $invoiceDate,
-            'amount_words'   => $amountWords,
+            'invoice_number'        => $invoiceNumber,
+            'invoice_date'          => $invoiceDate,
+            'amount_words'          => $amountWords,
+            'invoice_validity_days' => 14,
         ];
 
         $this->api->sendMessage($chatId, '⏳ Генерирую счёт...');

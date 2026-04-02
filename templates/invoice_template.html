@@ -176,7 +176,7 @@
 </tr>
 <tr>
     <td class="bh-inn-label">ИНН {{user_inn}}</td>
-    <td class="bh-kpp-label">КПП</td>
+    <td class="bh-kpp-label">КПП —</td>
     <td class="bh-acc-label">Сч. №</td>
     <td class="bh-acc-value">{{user_account_number}}</td>
 </tr>
@@ -192,6 +192,8 @@
 
 <!-- Заголовок счёта -->
 <div class="invoice-title">Счёт на оплату № {{invoice_number}} от {{invoice_date}}</div>
+
+<p style="text-align: center; font-size: 10pt; margin-top: 5px;">Счёт действителен в течение {{invoice_validity_days}} календарных дней с даты выставления.</p>
 
 <!-- Поставщик / Покупатель -->
 <div class="supplier-buyer">

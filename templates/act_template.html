@@ -49,6 +49,10 @@
 </p>
 
 <p class="paragraph">
+Период оказания услуг: с {{date_start}} по {{date_end}}
+</p>
+
+<p class="paragraph">
 1. Исполнитель оказал, а Заказчик принял следующие услуги по Договору № {{contract_number}} от {{contract_date}}:
 </p>
 
@@ -81,6 +85,10 @@
 3. Настоящий Акт составлен в двух экземплярах, имеющих равную юридическую силу, по одному для каждой Стороны.
 </p>
 
+<p class="paragraph">
+Чек НПД (приложение «Мой налог»): № ________________ от «___» _____________ 20___ г.
+</p>
+
 <table class="requisites-table">
 <tr>
     <td>
@@ -93,7 +101,7 @@
     <td>
         <b>Заказчик:</b><br><br>
         {{client_display_name}}<br>
-        ИНН: {{client_inn}}<br><br>
+        {{#if client_inn}}ИНН: {{client_inn}}<br>{{/if}}<br>
         Подпись: _____________________<br><br>
         / {{client_signatory_name}} /
     </td>

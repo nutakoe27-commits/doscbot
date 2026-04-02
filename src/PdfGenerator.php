@@ -50,6 +50,7 @@ class PdfGenerator
     {
         $html = file_get_contents($this->templatesDir . '/act_template.html');
         $placeholders = $this->buildActPlaceholders($user, $client, $contract, $actData);
+        $html = $this->processSimpleConditionals($html, $placeholders);
         $html = $this->replacePlaceholders($html, $placeholders);
 
         $filename = 'act_' . $actData['act_number'] . '_' . time() . '.pdf';
@@ -84,9 +85,10 @@ class PdfGenerator
             '{{client_full_name}}'     => $client['full_name'],
             '{{client_inn}}'           => $client['inn'] ?? '',
             '{{client_kpp}}'           => $client['kpp'] ?? '',
-            '{{service_description}}'  => $contract['service_description'],
-            '{{amount}}'               => number_format((float) $contract['amount'], 2, '.', ' '),
-            '{{amount_words}}'         => $invoiceData['amount_words'],
+            '{{service_description}}'     => $contract['service_description'],
+            '{{amount}}'                  => number_format((float) $contract['amount'], 2, '.', ' '),
+            '{{amount_words}}'            => $invoiceData['amount_words'],
+            '{{invoice_validity_days}}'   => (string) ($invoiceData['invoice_validity_days'] ?? 14),
         ];
     }
 
@@ -240,6 +242,8 @@ class PdfGenerator
             '{{service_description}}' => $contract['service_description'],
             '{{amount}}'              => number_format((float) $contract['amount'], 2, '.', ' '),
             '{{amount_words}}'        => $contract['amount_words'],
+            '{{date_start}}'          => $this->formatDate($contract['date_start']),
+            '{{date_end}}'            => $this->formatDate($contract['date_end']),
         ];
     }
 
@@ -257,6 +261,20 @@ class PdfGenerator
             }
         }
         return $lines;
+    }
+
+    private function processSimpleConditionals(string $html, array $placeholders): string
+    {
+        return preg_replace_callback(
+            '/\{\{#if (\w+)\}\}(.*?)\{\{\/if\}\}/s',
+            function ($matches) use ($placeholders) {
+                $var = $matches[1];
+                $key = '{{' . $var . '}}';
+                $value = $placeholders[$key] ?? '';
+                return !empty($value) ? $matches[2] : '';
+            },
+            $html
+        );
     }
 
     private function processConditionalBlocks(string $html, string $clientType): string
