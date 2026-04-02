@@ -14,6 +14,7 @@ class Database
         'users' => [
             'full_name', 'inn', 'address', 'phone', 'email',
             'bank_name', 'account_number', 'bik', 'corr_account',
+            'username',
         ],
         'clients' => [
             'user_id', 'client_type', 'full_name', 'inn', 'kpp', 'ogrn', 'ogrnip',
@@ -63,11 +64,49 @@ class Database
         return $row ?: null;
     }
 
-    public function createUser(int $telegramId): int
+    public function createUser(int $telegramId, ?string $username = null): int
     {
-        $stmt = $this->pdo->prepare('INSERT INTO users (telegram_id) VALUES (?)');
-        $stmt->execute([$telegramId]);
+        $stmt = $this->pdo->prepare('INSERT INTO users (telegram_id, username) VALUES (?, ?)');
+        $stmt->execute([$telegramId, $username]);
         return (int) $this->pdo->lastInsertId();
+    }
+
+    public function updateUsername(int $telegramId, ?string $username): void
+    {
+        $stmt = $this->pdo->prepare('UPDATE users SET username = ? WHERE telegram_id = ?');
+        $stmt->execute([$username, $telegramId]);
+    }
+
+    public function getUserByUsername(string $username): ?array
+    {
+        $username = ltrim($username, '@');
+        $stmt = $this->pdo->prepare('SELECT * FROM users WHERE username = ? LIMIT 1');
+        $stmt->execute([$username]);
+        $row = $stmt->fetch();
+        return $row ?: null;
+    }
+
+    public function grantSubscription(int $telegramId, int $months = 1): void
+    {
+        $stmt = $this->pdo->prepare(
+            'UPDATE users SET subscription_status = "paid", '
+            . 'subscription_end = DATE_ADD(GREATEST(COALESCE(subscription_end, CURDATE()), CURDATE()), INTERVAL ? MONTH) '
+            . 'WHERE telegram_id = ?'
+        );
+        $stmt->execute([$months, $telegramId]);
+    }
+
+    public function revokeSubscription(int $telegramId): void
+    {
+        $stmt = $this->pdo->prepare('UPDATE users SET subscription_status = "free", subscription_end = NULL WHERE telegram_id = ?');
+        $stmt->execute([$telegramId]);
+    }
+
+    public function isSubscriptionActive(array $user): bool
+    {
+        if (($user['subscription_status'] ?? 'free') !== 'paid') return false;
+        if (empty($user['subscription_end'])) return true; // paid без даты = активна
+        return $user['subscription_end'] >= date('Y-m-d');
     }
 
     public function updateUser(int $telegramId, array $fields): void

@@ -139,6 +139,89 @@ class AdminHandler
         return $this->adminId;
     }
 
+    // ── Grant / Revoke ──
+
+    /**
+     * /grant @username [months]
+     * Пример: /grant @ivan или /grant @ivan 3
+     */
+    public function handleGrant(int $chatId, int $telegramId, string $text): void
+    {
+        if (!$this->isAdmin($telegramId)) {
+            $this->api->sendMessage($chatId, 'Команда доступна только администратору.');
+            return;
+        }
+
+        // Парсим: /grant @username [months]
+        $parts = preg_split('/\s+/', $text);
+        $usernameRaw = $parts[1] ?? '';
+        $months = (int) ($parts[2] ?? 1);
+        if ($months < 1) $months = 1;
+        if ($months > 12) $months = 12;
+
+        $username = ltrim($usernameRaw, '@');
+        if (!$username) {
+            $this->api->sendMessage($chatId, "❓ Использование: /grant @username [месяцы]\nПример: /grant @ivan\nПример: /grant @ivan 3");
+            return;
+        }
+
+        $user = $this->db->getUserByUsername($username);
+        if (!$user) {
+            $this->api->sendMessage($chatId, "❌ Пользователь @{$username} не найден.\nОн должен сначала написать боту /start.");
+            return;
+        }
+
+        $this->db->grantSubscription((int) $user['telegram_id'], $months);
+
+        // Перечитываем пользователя для актуальной даты
+        $updated = $this->db->getUserByTelegramId((int) $user['telegram_id']);
+        $endDate = $updated['subscription_end'] ?? '—';
+        $name = $user['full_name'] ?: '@' . $username;
+
+        $this->api->sendMessage($chatId,
+            "✅ Подписка PRO выдана!\n\n"
+            . "👤 {$name}\n"
+            . "📅 Срок: {$months} мес. (до {$endDate})"
+        );
+
+        // Уведомляем пользователя
+        $this->api->sendMessage((int) $user['telegram_id'],
+            "🎉 Вам активирована подписка PRO!\n"
+            . "Безлимитная генерация документов до {$endDate}."
+        );
+    }
+
+    /**
+     * /revoke @username
+     */
+    public function handleRevoke(int $chatId, int $telegramId, string $text): void
+    {
+        if (!$this->isAdmin($telegramId)) {
+            $this->api->sendMessage($chatId, 'Команда доступна только администратору.');
+            return;
+        }
+
+        $parts = preg_split('/\s+/', $text);
+        $usernameRaw = $parts[1] ?? '';
+        $username = ltrim($usernameRaw, '@');
+
+        if (!$username) {
+            $this->api->sendMessage($chatId, "❓ Использование: /revoke @username");
+            return;
+        }
+
+        $user = $this->db->getUserByUsername($username);
+        if (!$user) {
+            $this->api->sendMessage($chatId, "❌ Пользователь @{$username} не найден.");
+            return;
+        }
+
+        $this->db->revokeSubscription((int) $user['telegram_id']);
+        $name = $user['full_name'] ?: '@' . $username;
+
+        $this->api->sendMessage($chatId, "❌ Подписка {$name} отключена.");
+    }
+
     // ── Broadcast ──
 
     /**

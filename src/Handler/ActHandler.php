@@ -154,7 +154,7 @@ class ActHandler
         }
 
         // Free tier limit check
-        if (($user['subscription_status'] ?? 'free') === 'free') {
+        if (!$this->db->isSubscriptionActive($user)) {
             $monthCount = $this->db->countDocumentsThisMonth($user['id']);
             if ($monthCount >= 3) {
                 $this->api->sendMessage($chatId, "📊 Вы достигли лимита бесплатных документов (3 в месяц). Для безлимитного доступа оформите подписку.");

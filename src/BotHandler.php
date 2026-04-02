@@ -58,6 +58,12 @@ class BotHandler
         $chatId = $message['chat']['id'];
         $telegramId = $message['from']['id'];
         $text = trim($message['text'] ?? '');
+        $username = $message['from']['username'] ?? null;
+
+        // Обновляем username при каждом сообщении (пользователь мог сменить ник)
+        if ($username) {
+            $this->db->updateUsername($telegramId, $username);
+        }
 
         // Handle non-text messages (photo, sticker, voice, etc.)
         if ($text === '') {
@@ -104,6 +110,14 @@ class BotHandler
         }
         if ($text === '/broadcast') {
             $this->adminHandler->handleBroadcastStart($chatId, $telegramId);
+            return;
+        }
+        if (str_starts_with($text, '/grant ')) {
+            $this->adminHandler->handleGrant($chatId, $telegramId, $text);
+            return;
+        }
+        if (str_starts_with($text, '/revoke ')) {
+            $this->adminHandler->handleRevoke($chatId, $telegramId, $text);
             return;
         }
         if ($text === '/deletedata') {
@@ -183,8 +197,13 @@ class BotHandler
         $telegramId = $callback['from']['id'];
         $data = $callback['data'];
         $callbackId = $callback['id'];
+        $username = $callback['from']['username'] ?? null;
 
         $this->api->answerCallback($callbackId);
+
+        if ($username) {
+            $this->db->updateUsername($telegramId, $username);
+        }
 
         // Date buttons can be pressed during different states
         if (in_array($data, ['date_today', 'date_plus30', 'date_plus90'], true)) {
@@ -512,25 +531,26 @@ class BotHandler
 
     private function showSubscriptionInfo(int $chatId, array $user): void
     {
-        $status = ($user['subscription_status'] ?? 'free') === 'paid' ? 'Платная' : 'Бесплатная';
+        $isActive = $this->db->isSubscriptionActive($user);
         $monthCount = $this->db->countDocumentsThisMonth($user['id']);
 
         $msg = "💳 <b>Подписка</b>\n\n"
-            . "Текущий план: {$status}\n"
             . "Документов в этом месяце: {$monthCount}\n\n";
 
-        if (($user['subscription_status'] ?? 'free') === 'free') {
+        if (!$isActive) {
             $remaining = max(0, 3 - $monthCount);
-            $msg .= "Бесплатный план: до 3 документов в месяц.\n"
-                . "Осталось: {$remaining}\n\n"
+            $msg .= "Текущий план: Бесплатный\n"
+                . "Осталось: {$remaining} из 3\n\n"
                 . "📎 <b>Подписка PRO — 299 руб./мес</b>\n"
-                . "• Безлимитная генерация договоров и актов\n"
+                . "• Безлимитная генерация договоров, актов и счетов\n"
                 . "• Неограниченное количество клиентов\n"
                 . "• Экспорт в CSV\n\n"
                 . "🛠 Оплата подписки скоро появится в боте. Следите за обновлениями!";
         } else {
-            $msg .= "✅ <b>Подписка PRO</b> — активна\n\n"
-                . "У вас безлимитный доступ к генерации документов.";
+            $endDate = $user['subscription_end'] ?? 'бессрочно';
+            $msg .= "✅ <b>Подписка PRO</b> — активна\n"
+                . "Действует до: {$endDate}\n\n"
+                . "Безлимитный доступ к генерации документов.";
         }
 
         $keyboard = [

@@ -76,3 +76,7 @@ ALTER TABLE `users` ADD COLUMN `consent_given` TINYINT(1) NOT NULL DEFAULT 0 AFT
 
 -- Migration: добавить тип документа 'invoice' (счёт на оплату)
 ALTER TABLE `documents` MODIFY COLUMN `doc_type` ENUM('contract', 'act', 'invoice') NOT NULL;
+
+-- Migration: username и срок подписки
+ALTER TABLE `users` ADD COLUMN `username` VARCHAR(255) DEFAULT NULL AFTER `telegram_id`;
+ALTER TABLE `users` ADD COLUMN `subscription_end` DATE DEFAULT NULL AFTER `subscription_status`;
