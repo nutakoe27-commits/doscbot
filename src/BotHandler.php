@@ -5,6 +5,7 @@ namespace DocBot;
 use DocBot\Handler\RegistrationHandler;
 use DocBot\Handler\ContractHandler;
 use DocBot\Handler\ActHandler;
+use DocBot\Handler\InvoiceHandler;
 use DocBot\Handler\ClientHandler;
 use DocBot\Handler\ExportHandler;
 use DocBot\Handler\AdminHandler;
@@ -19,6 +20,7 @@ class BotHandler
     private RegistrationHandler $registrationHandler;
     private ContractHandler $contractHandler;
     private ActHandler $actHandler;
+    private InvoiceHandler $invoiceHandler;
     private ClientHandler $clientHandler;
     private ExportHandler $exportHandler;
     private AdminHandler $adminHandler;
@@ -35,6 +37,7 @@ class BotHandler
         $this->registrationHandler = new RegistrationHandler($this->db, $this->api);
         $this->contractHandler = new ContractHandler($this->db, $this->api, $this->pdf);
         $this->actHandler = new ActHandler($this->db, $this->api, $this->pdf);
+        $this->invoiceHandler = new InvoiceHandler($this->db, $this->api, $this->pdf);
         $this->clientHandler = new ClientHandler($this->db, $this->api);
         $this->exportHandler = new ExportHandler($this->db, $this->api, $this->storageDir);
         $this->adminHandler = new AdminHandler($this->db, $this->api, $adminId);
@@ -161,6 +164,7 @@ class BotHandler
             'inline_keyboard' => [
                 [['text' => '📄 Создать договор', 'callback_data' => 'new_contract']],
                 [['text' => '📋 Создать акт', 'callback_data' => 'new_act']],
+                [['text' => '🧾 Выставить счёт', 'callback_data' => 'new_invoice']],
                 [['text' => '👥 Мои клиенты', 'callback_data' => 'my_clients']],
                 [['text' => '📤 Экспорт документов', 'callback_data' => 'export_docs']],
                 [['text' => '⚙️ Мои реквизиты', 'callback_data' => 'my_data']],
@@ -193,6 +197,12 @@ class BotHandler
                     $this->actHandler->handleDateCallback($chatId, $telegramId, $data);
                 }
             }
+            return;
+        }
+
+        // Invoice date button
+        if ($data === 'invoice_date_today') {
+            $this->invoiceHandler->handleDateCallback($chatId, $telegramId, $data);
             return;
         }
 
@@ -253,6 +263,22 @@ class BotHandler
             return;
         }
 
+        // Invoice confirmation
+        if ($data === 'confirm_invoice') {
+            $this->invoiceHandler->handleConfirm($chatId, $telegramId);
+            return;
+        }
+        if ($data === 'edit_invoice') {
+            $this->invoiceHandler->handleEdit($chatId, $telegramId);
+            return;
+        }
+        if ($data === 'cancel_invoice') {
+            $this->db->clearState($telegramId);
+            $this->api->sendMessage($chatId, '❌ Создание счёта отменено.');
+            $this->showMainMenu($chatId);
+            return;
+        }
+
         // New contract
         if ($data === 'new_contract') {
             $this->contractHandler->startContractFlow($chatId, $telegramId, $user);
@@ -262,6 +288,12 @@ class BotHandler
         // New act
         if ($data === 'new_act') {
             $this->actHandler->startActFlow($chatId, $telegramId, $user);
+            return;
+        }
+
+        // New invoice
+        if ($data === 'new_invoice') {
+            $this->invoiceHandler->startInvoiceFlow($chatId, $telegramId, $user);
             return;
         }
 
@@ -356,6 +388,13 @@ class BotHandler
             return;
         }
 
+        // Select contract for invoice
+        if (str_starts_with($data, 'invoice_contract_')) {
+            $contractId = (int) substr($data, strlen('invoice_contract_'));
+            $this->invoiceHandler->onContractSelected($chatId, $telegramId, $contractId);
+            return;
+        }
+
         // Edit registration fields
         if (str_starts_with($data, 'edit_')) {
             $field = substr($data, strlen('edit_'));
@@ -374,11 +413,6 @@ class BotHandler
         // Registration states
         if (str_starts_with($state, 'reg_')) {
             if ($this->registrationHandler->handleStateInput($chatId, $telegramId, $text, $state, $data)) {
-                // After registration completes, show menu
-                $newState = $this->db->getState($telegramId);
-                if (!$newState || !$newState['state']) {
-                    $this->showMainMenu($chatId);
-                }
                 return;
             }
         }
@@ -386,7 +420,6 @@ class BotHandler
         // Edit field
         if ($state === 'edit_field') {
             if ($this->registrationHandler->handleEditField($chatId, $telegramId, $text, $data)) {
-                $this->showMainMenu($chatId);
                 return;
             }
         }
@@ -394,11 +427,6 @@ class BotHandler
         // New client flow
         if (str_starts_with($state, 'new_client_')) {
             if ($this->clientHandler->handleStateInput($chatId, $telegramId, $text, $state, $data)) {
-                // After client saved outside contract flow, show menu
-                $newState = $this->db->getState($telegramId);
-                if (!$newState || !$newState['state']) {
-                    $this->showMainMenu($chatId);
-                }
                 return;
             }
         }
@@ -406,11 +434,6 @@ class BotHandler
         // Contract flow
         if (str_starts_with($state, 'contract_')) {
             if ($this->contractHandler->handleStateInput($chatId, $telegramId, $text, $state, $data)) {
-                // After contract generation, show menu
-                $newState = $this->db->getState($telegramId);
-                if (!$newState || !$newState['state']) {
-                    $this->showMainMenu($chatId);
-                }
                 return;
             }
         }
@@ -418,10 +441,13 @@ class BotHandler
         // Act flow
         if ($state === 'act_date') {
             if ($this->actHandler->handleStateInput($chatId, $telegramId, $text, $state, $data)) {
-                $newState = $this->db->getState($telegramId);
-                if (!$newState || !$newState['state']) {
-                    $this->showMainMenu($chatId);
-                }
+                return;
+            }
+        }
+
+        // Invoice flow
+        if ($state === 'invoice_date') {
+            if ($this->invoiceHandler->handleStateInput($chatId, $telegramId, $text, $state, $data)) {
                 return;
             }
         }
@@ -445,6 +471,7 @@ class BotHandler
             . "Я помогаю самозанятым генерировать документы:\n\n"
             . "📄 <b>Договор оказания услуг</b> — создайте договор с клиентом, выберите тип заказчика (физлицо, ИП, юрлицо), укажите описание услуги и сумму.\n\n"
             . "📋 <b>Акт сдачи-приёмки</b> — создайте акт к существующему договору.\n\n"
+            . "🧾 <b>Счёт на оплату</b> — выставите счёт на оплату по существующему договору.\n\n"
             . "<b>Команды:</b>\n"
             . "/start — начать работу / главное меню\n"
             . "/menu — главное меню\n"

@@ -194,7 +194,8 @@ class ActHandler
             $this->db->clearState($telegramId);
 
             $this->api->sendDocument($chatId, $pdfPath, "Акт {$actNumber}");
-            $this->api->sendMessage($chatId, "✅ Акт {$actNumber} к договору {$contract['contract_number']} создан и отправлен.");
+            $menuKb = ['inline_keyboard' => [[['text' => '📋 Главное меню', 'callback_data' => 'main_menu']]]];
+            $this->api->sendMessage($chatId, "✅ Акт {$actNumber} к договору {$contract['contract_number']} создан и отправлен.", $menuKb);
         } catch (\Throwable $e) {
             $this->api->sendMessage($chatId, '❌ Ошибка при генерации PDF: ' . $e->getMessage());
             $this->db->clearState($telegramId);

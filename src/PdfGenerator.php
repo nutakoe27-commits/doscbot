@@ -42,6 +42,40 @@ class PdfGenerator
         return $this->renderPdf($html, $filename, 'Акт ' . $actData['act_number']);
     }
 
+    /**
+     * Генерирует PDF счёта на оплату и возвращает путь к файлу.
+     */
+    public function generateInvoice(array $user, array $client, array $contract, array $invoiceData): string
+    {
+        $html = file_get_contents($this->templatesDir . '/invoice_template.html');
+        $placeholders = $this->buildInvoicePlaceholders($user, $client, $contract, $invoiceData);
+        $html = $this->processConditionalBlocks($html, $client['client_type']);
+        $html = $this->replacePlaceholders($html, $placeholders);
+
+        $filename = 'invoice_' . $invoiceData['invoice_number'] . '_' . time() . '.pdf';
+        return $this->renderPdf($html, $filename, 'Счёт ' . $invoiceData['invoice_number']);
+    }
+
+    private function buildInvoicePlaceholders(array $user, array $client, array $contract, array $invoiceData): array
+    {
+        return [
+            '{{invoice_number}}'       => $invoiceData['invoice_number'],
+            '{{invoice_date}}'         => $this->formatDate($invoiceData['invoice_date']),
+            '{{user_full_name}}'       => $user['full_name'],
+            '{{user_inn}}'             => $user['inn'],
+            '{{user_bank_name}}'       => $user['bank_name'],
+            '{{user_account_number}}'  => $user['account_number'],
+            '{{user_bik}}'             => $user['bik'],
+            '{{user_corr_account}}'    => $user['corr_account'],
+            '{{client_full_name}}'     => $client['full_name'],
+            '{{client_inn}}'           => $client['inn'] ?? '',
+            '{{client_kpp}}'           => $client['kpp'] ?? '',
+            '{{service_description}}'  => $contract['service_description'],
+            '{{amount}}'               => number_format((float) $contract['amount'], 2, '.', ' '),
+            '{{amount_words}}'         => $invoiceData['amount_words'],
+        ];
+    }
+
     private function buildContractPlaceholders(array $user, array $client, array $doc): array
     {
         $clientExtra = $this->buildClientExtraRequisites($client);

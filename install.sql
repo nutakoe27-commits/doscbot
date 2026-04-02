@@ -41,7 +41,7 @@ CREATE TABLE IF NOT EXISTS `documents` (
     `id` INT AUTO_INCREMENT PRIMARY KEY,
     `user_id` INT NOT NULL,
     `client_id` INT NOT NULL,
-    `doc_type` ENUM('contract', 'act') NOT NULL,
+    `doc_type` ENUM('contract', 'act', 'invoice') NOT NULL,
     `contract_number` VARCHAR(50) NOT NULL,
     `service_description` TEXT DEFAULT NULL,
     `amount` DECIMAL(12,2) DEFAULT NULL,
@@ -73,3 +73,6 @@ ALTER TABLE `users` ADD COLUMN `subscription_status` ENUM('free', 'paid') NOT NU
 
 -- Migration: 152-ФЗ — добавить поле согласия на обработку ПД
 ALTER TABLE `users` ADD COLUMN `consent_given` TINYINT(1) NOT NULL DEFAULT 0 AFTER `subscription_status`;
+
+-- Migration: добавить тип документа 'invoice' (счёт на оплату)
+ALTER TABLE `documents` MODIFY COLUMN `doc_type` ENUM('contract', 'act', 'invoice') NOT NULL;

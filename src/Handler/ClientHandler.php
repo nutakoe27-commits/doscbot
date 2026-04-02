@@ -58,7 +58,8 @@ class ClientHandler
         }
 
         $this->db->deleteClient($clientId);
-        $this->api->sendMessage($chatId, '✅ Клиент удалён.');
+        $menuKb = ['inline_keyboard' => [[['text' => '📋 Главное меню', 'callback_data' => 'main_menu']]]];
+        $this->api->sendMessage($chatId, '✅ Клиент удалён.', $menuKb);
     }
 
     public function startNewClientFlow(int $chatId, int $telegramId): void
@@ -181,7 +182,8 @@ class ClientHandler
                 $this->api->sendMessage($chatId, "✅ Клиент сохранён.\n\nВведите описание услуги:");
             } else {
                 $this->db->clearState($telegramId);
-                $this->api->sendMessage($chatId, "✅ Клиент «{$data['full_name']}» сохранён.");
+                $menuKb = ['inline_keyboard' => [[['text' => '📋 Главное меню', 'callback_data' => 'main_menu']]]];
+                $this->api->sendMessage($chatId, "✅ Клиент «{$data['full_name']}» сохранён.", $menuKb);
             }
         }
         return true;

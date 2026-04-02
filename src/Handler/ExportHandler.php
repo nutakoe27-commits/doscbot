@@ -43,7 +43,7 @@ class ExportHandler
         fwrite($fp, "\xEF\xBB\xBF");
         fputcsv($fp, ['Номер', 'Тип', 'Клиент', 'Услуга', 'Сумма', 'Дата начала', 'Дата окончания', 'Создан'], ';');
 
-        $typeLabels = ['contract' => 'Договор', 'act' => 'Акт'];
+        $typeLabels = ['contract' => 'Договор', 'act' => 'Акт', 'invoice' => 'Счёт'];
         foreach ($documents as $doc) {
             fputcsv($fp, [
                 $doc['contract_number'],
@@ -59,7 +59,8 @@ class ExportHandler
         fclose($fp);
 
         $this->api->sendDocument($chatId, $filepath, 'Экспорт документов');
-        $this->api->sendMessage($chatId, '✅ CSV-файл с вашими документами отправлен.');
+        $menuKb = ['inline_keyboard' => [[['text' => '📋 Главное меню', 'callback_data' => 'main_menu']]]];
+        $this->api->sendMessage($chatId, '✅ CSV-файл с вашими документами отправлен.', $menuKb);
 
         // Cleanup after sending
         @unlink($filepath);

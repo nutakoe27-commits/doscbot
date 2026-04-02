@@ -48,7 +48,8 @@ class RegistrationHandler
             $this->api->sendMessage($chatId, $info['prompt']);
         } else {
             $this->db->clearState($telegramId);
-            $this->api->sendMessage($chatId, "✅ Регистрация завершена! Ваши реквизиты сохранены.");
+            $menuKb = ['inline_keyboard' => [[['text' => '📋 Главное меню', 'callback_data' => 'main_menu']]]];
+            $this->api->sendMessage($chatId, "✅ Регистрация завершена! Ваши реквизиты сохранены.", $menuKb);
         }
         return true;
     }
@@ -61,7 +62,8 @@ class RegistrationHandler
         }
         $this->db->updateUser($telegramId, [$field => $text]);
         $this->db->clearState($telegramId);
-        $this->api->sendMessage($chatId, "✅ Данные обновлены.");
+        $menuKb = ['inline_keyboard' => [[['text' => '📋 Главное меню', 'callback_data' => 'main_menu']]]];
+        $this->api->sendMessage($chatId, "✅ Данные обновлены.", $menuKb);
         return true;
     }
 

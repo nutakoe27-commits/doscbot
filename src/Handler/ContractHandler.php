@@ -209,7 +209,8 @@ class ContractHandler
             $this->db->clearState($telegramId);
 
             $this->api->sendDocument($chatId, $pdfPath, "Договор {$contractNumber}");
-            $this->api->sendMessage($chatId, "✅ Договор {$contractNumber} создан и отправлен.");
+            $menuKb = ['inline_keyboard' => [[['text' => '📋 Главное меню', 'callback_data' => 'main_menu']]]];
+            $this->api->sendMessage($chatId, "✅ Договор {$contractNumber} создан и отправлен.", $menuKb);
         } catch (\Throwable $e) {
             $this->api->sendMessage($chatId, '❌ Ошибка при генерации PDF: ' . $e->getMessage());
             $this->db->clearState($telegramId);
