@@ -44,10 +44,15 @@ class ExportHandler
         fputcsv($fp, ['Номер', 'Тип', 'Клиент', 'Услуга', 'Сумма', 'Дата начала', 'Дата окончания', 'Создан'], ';');
 
         $typeLabels = ['contract' => 'Договор', 'act' => 'Акт', 'invoice' => 'Счёт'];
+        $subtypeLabels = ['service' => 'услуги', 'podryad' => 'подряд'];
         foreach ($documents as $doc) {
+            $typeLabel = $typeLabels[$doc['doc_type']] ?? $doc['doc_type'];
+            if ($doc['doc_type'] === 'contract' && !empty($doc['contract_subtype'])) {
+                $typeLabel .= ' (' . ($subtypeLabels[$doc['contract_subtype']] ?? $doc['contract_subtype']) . ')';
+            }
             fputcsv($fp, [
                 $doc['contract_number'],
-                $typeLabels[$doc['doc_type']] ?? $doc['doc_type'],
+                $typeLabel,
                 $doc['client_name'],
                 $doc['service_description'] ?? '',
                 $doc['amount'] ?? '',

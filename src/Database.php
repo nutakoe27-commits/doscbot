@@ -24,7 +24,7 @@ class Database
         ],
         'documents' => [
             'user_id', 'client_id', 'doc_type', 'contract_number',
-            'service_description', 'amount', 'amount_words',
+            'contract_subtype', 'service_description', 'amount', 'amount_words',
             'date_start', 'date_end', 'city', 'payment_terms',
             'payment_days', 'payment_moment', 'acceptance_days',
             'termination_days', 'pdf_path', 'parent_contract_id',

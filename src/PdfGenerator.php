@@ -30,6 +30,20 @@ class PdfGenerator
     }
 
     /**
+     * Генерирует PDF договора подряда и возвращает путь к файлу.
+     */
+    public function generatePodryad(array $user, array $client, array $document): string
+    {
+        $html = file_get_contents($this->templatesDir . '/contract_podryad_template.html');
+        $placeholders = $this->buildPodryadPlaceholders($user, $client, $document);
+        $html = $this->processConditionalBlocks($html, $client['client_type']);
+        $html = $this->replacePlaceholders($html, $placeholders);
+
+        $filename = 'contract_' . $document['contract_number'] . '_' . time() . '.pdf';
+        return $this->renderPdf($html, $filename, 'Договор подряда ' . $document['contract_number']);
+    }
+
+    /**
      * Генерирует PDF акта и возвращает путь к файлу.
      */
     public function generateAct(array $user, array $client, array $contract, array $actData): string
@@ -129,6 +143,76 @@ class PdfGenerator
             '{{payment_terms}}'           => $doc['payment_terms'] ?? 'по безналичному расчёту',
             '{{payment_days}}'            => (string) ($doc['payment_days'] ?? 5),
             '{{payment_moment}}'          => $doc['payment_moment'] ?? 'с момента подписания Акта сдачи-приёмки',
+            '{{acceptance_days}}'         => (string) ($doc['acceptance_days'] ?? 5),
+            '{{termination_days}}'        => (string) ($doc['termination_days'] ?? 14),
+        ];
+    }
+
+    private function buildPodryadPlaceholders(array $user, array $client, array $doc): array
+    {
+        $clientExtra = $this->buildClientExtraRequisites($client);
+        $clientBankDetails = !empty($client['bank_details'])
+            ? 'Банковские реквизиты:<br>' . nl2br(htmlspecialchars($client['bank_details'])) . '<br>'
+            : '';
+        $clientSignatory = $client['client_type'] === 'org'
+            ? ($client['representative_name'] ?? $client['full_name'])
+            : $client['full_name'];
+        $clientDisplayName = $client['full_name'];
+
+        $months = [
+            1 => 'января', 2 => 'февраля', 3 => 'марта', 4 => 'апреля',
+            5 => 'мая', 6 => 'июня', 7 => 'июля', 8 => 'августа',
+            9 => 'сентября', 10 => 'октября', 11 => 'ноября', 12 => 'декабря',
+        ];
+
+        $tsStart = strtotime($doc['date_start']);
+        $tsEnd = strtotime($doc['date_end']);
+
+        return [
+            '{{contract_number}}'         => $doc['contract_number'],
+            '{{city}}'                    => $doc['city'] ?? 'Москва',
+            '{{contract_date}}'           => $this->formatDate($doc['date_start']),
+            '{{user_full_name}}'          => $user['full_name'],
+            '{{user_inn}}'                => $user['inn'],
+            '{{user_address}}'            => $user['address'],
+            '{{user_phone}}'              => $user['phone'],
+            '{{user_email}}'              => $user['email'],
+            '{{user_bank_name}}'          => $user['bank_name'],
+            '{{user_account}}'            => $user['account_number'],
+            '{{user_bik}}'                => $user['bik'],
+            '{{user_corr_account}}'       => $user['corr_account'],
+            '{{client_full_name}}'        => $client['full_name'],
+            '{{client_display_name}}'     => $clientDisplayName,
+            '{{client_inn}}'              => $client['inn'] ?? '',
+            '{{client_kpp}}'              => $client['kpp'] ?? '',
+            '{{client_ogrn}}'             => $client['ogrn'] ?? '',
+            '{{client_ogrnip}}'           => $client['ogrnip'] ?? '',
+            '{{client_representative_title}}' => $client['representative_title'] ?? '',
+            '{{client_representative_name}}'  => $client['representative_name'] ?? '',
+            '{{client_basis}}'            => $client['basis'] ?? 'Устава',
+            '{{client_passport_series}}'  => $client['passport_series'] ?? '',
+            '{{client_passport_number}}'  => $client['passport_number'] ?? '',
+            '{{client_passport_issued}}'  => $client['passport_issued'] ?? '',
+            '{{client_address}}'          => $client['address'] ?? '',
+            '{{client_phone}}'            => $client['phone'] ?? '',
+            '{{client_email}}'            => $client['email'] ?? '',
+            '{{client_extra_requisites}}' => $clientExtra,
+            '{{client_bank_details}}'     => $clientBankDetails,
+            '{{client_signatory_name}}'   => $clientSignatory,
+            '{{service_description}}'     => $doc['service_description'],
+            '{{amount}}'                  => number_format((float) $doc['amount'], 2, '.', ' '),
+            '{{amount_words}}'            => $doc['amount_words'],
+            '{{date_start}}'              => $this->formatDate($doc['date_start']),
+            '{{date_end}}'                => $this->formatDate($doc['date_end']),
+            '{{date_start_day}}'          => $tsStart ? date('j', $tsStart) : '',
+            '{{date_start_month_word}}'   => $tsStart ? ($months[(int) date('n', $tsStart)] ?? '') : '',
+            '{{date_start_year}}'         => $tsStart ? date('Y', $tsStart) : '',
+            '{{date_end_day}}'            => $tsEnd ? date('j', $tsEnd) : '',
+            '{{date_end_month_word}}'     => $tsEnd ? ($months[(int) date('n', $tsEnd)] ?? '') : '',
+            '{{date_end_year}}'           => $tsEnd ? date('Y', $tsEnd) : '',
+            '{{payment_terms}}'           => $doc['payment_terms'] ?? 'по безналичному расчёту',
+            '{{payment_days}}'            => (string) ($doc['payment_days'] ?? 5),
+            '{{payment_moment}}'          => $doc['payment_moment'] ?? 'с момента подписания Акта приема-передачи выполненных Работ',
             '{{acceptance_days}}'         => (string) ($doc['acceptance_days'] ?? 5),
             '{{termination_days}}'        => (string) ($doc['termination_days'] ?? 14),
         ];

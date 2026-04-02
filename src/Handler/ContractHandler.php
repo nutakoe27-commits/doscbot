@@ -22,6 +22,20 @@ class ContractHandler
 
     public function startContractFlow(int $chatId, int $telegramId, array $user): void
     {
+        $keyboard = [
+            'inline_keyboard' => [
+                [['text' => '📄 Оказание услуг', 'callback_data' => 'contract_type_service']],
+                [['text' => '🔧 Подряд', 'callback_data' => 'contract_type_podryad']],
+                [['text' => '« Назад в меню', 'callback_data' => 'main_menu']],
+            ],
+        ];
+
+        $this->db->setState($telegramId, 'contract_select_type', ['_contract_flow' => true]);
+        $this->api->sendMessage($chatId, 'Выберите тип договора:', $keyboard);
+    }
+
+    public function handleTypeSelection(int $chatId, int $telegramId, string $subtype, array $user): void
+    {
         $clients = $this->db->getClientsByUserId($user['id']);
 
         $buttons = [];
@@ -31,7 +45,10 @@ class ContractHandler
         $buttons[] = [['text' => '➕ Новый клиент', 'callback_data' => 'new_client']];
         $buttons[] = [['text' => '« Назад в меню', 'callback_data' => 'main_menu']];
 
-        $this->db->setState($telegramId, 'contract_select_client', ['_contract_flow' => true]);
+        $this->db->setState($telegramId, 'contract_select_client', [
+            '_contract_flow' => true,
+            'contract_subtype' => $subtype,
+        ]);
 
         $keyboard = ['inline_keyboard' => $buttons];
         $this->api->sendMessage($chatId, 'Выберите клиента для договора:', $keyboard);
@@ -44,8 +61,11 @@ class ContractHandler
         $data['client_id'] = $clientId;
         $data['_contract_flow'] = true;
 
+        $isPodryad = ($data['contract_subtype'] ?? 'service') === 'podryad';
+        $prompt = $isPodryad ? 'Введите описание работ:' : 'Введите описание услуги:';
+
         $this->db->setState($telegramId, 'contract_service', $data);
-        $this->api->sendMessage($chatId, 'Введите описание услуги:');
+        $this->api->sendMessage($chatId, $prompt);
     }
 
     public function handleStateInput(int $chatId, int $telegramId, string $text, string $state, array $data): bool
@@ -115,10 +135,17 @@ class ContractHandler
         $dateStart = date('d.m.Y', strtotime($data['date_start']));
         $dateEnd = date('d.m.Y', strtotime($data['date_end']));
 
+        $subtypeLabels = ['service' => 'Договор оказания услуг', 'podryad' => 'Договор подряда'];
+        $subtype = $data['contract_subtype'] ?? 'service';
+        $subtypeLabel = $subtypeLabels[$subtype] ?? $subtypeLabels['service'];
+
+        $descLabel = $subtype === 'podryad' ? 'Работы' : 'Услуга';
+
         $msg = "📄 <b>Подтверждение договора:</b>\n\n"
+            . "Тип: {$subtypeLabel}\n"
             . "Клиент: {$client['full_name']}\n"
-            . "Тип: {$typeName}\n"
-            . "Услуга: {$data['service_description']}\n"
+            . "Тип клиента: {$typeName}\n"
+            . "{$descLabel}: {$data['service_description']}\n"
             . "Сумма: {$data['amount']} руб.\n"
             . "Город: {$data['city']}\n"
             . "Период: {$dateStart} — {$dateEnd}";
@@ -148,13 +175,17 @@ class ContractHandler
     {
         $stateRow = $this->db->getState($telegramId);
         $data = $stateRow ? (json_decode($stateRow['data'] ?? '{}', true) ?: []) : [];
-        // Keep client_id but restart from service description
+        $subtype = $data['contract_subtype'] ?? 'service';
+        // Keep client_id and subtype but restart from service description
         $newData = [
             'client_id' => $data['client_id'] ?? null,
+            'contract_subtype' => $subtype,
             '_contract_flow' => true,
         ];
+        $isPodryad = $subtype === 'podryad';
+        $prompt = $isPodryad ? 'Введите описание работ:' : 'Введите описание услуги:';
         $this->db->setState($telegramId, 'contract_service', $newData);
-        $this->api->sendMessage($chatId, 'Введите описание услуги:');
+        $this->api->sendMessage($chatId, $prompt);
     }
 
     public function generateContract(int $chatId, int $telegramId, array $data): void
@@ -178,14 +209,19 @@ class ContractHandler
             }
         }
 
+        $subtype = $data['contract_subtype'] ?? 'service';
+        $isPodryad = $subtype === 'podryad';
+
         $count = $this->db->countDocumentsToday($user['id'], 'contract');
-        $contractNumber = 'ДОУ-' . date('Ymd') . '-' . str_pad($count + 1, 3, '0', STR_PAD_LEFT);
+        $prefix = $isPodryad ? 'ДП-' : 'ДОУ-';
+        $contractNumber = $prefix . date('Ymd') . '-' . str_pad($count + 1, 3, '0', STR_PAD_LEFT);
         $amountWords = NumberToWords::convert((float) $data['amount']);
 
         $docData = [
             'user_id'             => $user['id'],
             'client_id'           => $client['id'],
             'doc_type'            => 'contract',
+            'contract_subtype'    => $subtype,
             'contract_number'     => $contractNumber,
             'service_description' => $data['service_description'],
             'amount'              => $data['amount'],
@@ -195,7 +231,9 @@ class ContractHandler
             'city'                => $data['city'] ?? 'Москва',
             'payment_terms'       => 'по безналичному расчёту',
             'payment_days'        => 5,
-            'payment_moment'      => 'с момента подписания Акта сдачи-приёмки',
+            'payment_moment'      => $isPodryad
+                ? 'с момента подписания Акта приема-передачи выполненных Работ'
+                : 'с момента подписания Акта сдачи-приёмки',
             'acceptance_days'     => 5,
             'termination_days'    => 14,
         ];
@@ -203,7 +241,9 @@ class ContractHandler
         $this->api->sendMessage($chatId, '⏳ Генерирую договор...');
 
         try {
-            $pdfPath = $this->pdf->generateContract($user, $client, $docData);
+            $pdfPath = $isPodryad
+                ? $this->pdf->generatePodryad($user, $client, $docData)
+                : $this->pdf->generateContract($user, $client, $docData);
             $docData['pdf_path'] = $pdfPath;
             $this->db->createDocument($docData);
             $this->db->clearState($telegramId);

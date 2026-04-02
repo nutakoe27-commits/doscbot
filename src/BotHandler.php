@@ -304,6 +304,13 @@ class BotHandler
             return;
         }
 
+        // Contract type selection
+        if ($data === 'contract_type_service' || $data === 'contract_type_podryad') {
+            $subtype = $data === 'contract_type_podryad' ? 'podryad' : 'service';
+            $this->contractHandler->handleTypeSelection($chatId, $telegramId, $subtype, $user);
+            return;
+        }
+
         // New act
         if ($data === 'new_act') {
             $this->actHandler->startActFlow($chatId, $telegramId, $user);
@@ -488,7 +495,7 @@ class BotHandler
     {
         $msg = "ℹ️ <b>Справка по DocBot</b>\n\n"
             . "Я помогаю самозанятым генерировать документы:\n\n"
-            . "📄 <b>Договор оказания услуг</b> — создайте договор с клиентом, выберите тип заказчика (физлицо, ИП, юрлицо), укажите описание услуги и сумму.\n\n"
+            . "📄 <b>Договор оказания услуг / подряда</b> — создайте договор с клиентом, выберите тип (услуги или подряд), тип заказчика (физлицо, ИП, юрлицо), укажите описание и сумму.\n\n"
             . "📋 <b>Акт сдачи-приёмки</b> — создайте акт к существующему договору.\n\n"
             . "🧾 <b>Счёт на оплату</b> — выставите счёт на оплату по существующему договору.\n\n"
             . "<b>Команды:</b>\n"

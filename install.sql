@@ -42,6 +42,7 @@ CREATE TABLE IF NOT EXISTS `documents` (
     `user_id` INT NOT NULL,
     `client_id` INT NOT NULL,
     `doc_type` ENUM('contract', 'act', 'invoice') NOT NULL,
+    `contract_subtype` VARCHAR(20) DEFAULT NULL,
     `contract_number` VARCHAR(50) NOT NULL,
     `service_description` TEXT DEFAULT NULL,
     `amount` DECIMAL(12,2) DEFAULT NULL,
@@ -80,3 +81,6 @@ ALTER TABLE `documents` MODIFY COLUMN `doc_type` ENUM('contract', 'act', 'invoic
 -- Migration: username и срок подписки
 ALTER TABLE `users` ADD COLUMN `username` VARCHAR(255) DEFAULT NULL AFTER `telegram_id`;
 ALTER TABLE `users` ADD COLUMN `subscription_end` DATE DEFAULT NULL AFTER `subscription_status`;
+
+-- Migration: тип договора (услуги / подряд)
+ALTER TABLE `documents` ADD COLUMN `contract_subtype` VARCHAR(20) DEFAULT NULL AFTER `doc_type`;
