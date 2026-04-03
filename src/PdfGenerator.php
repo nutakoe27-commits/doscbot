@@ -319,7 +319,7 @@ class PdfGenerator
                 $this->SetY(-15);
                 $this->SetFont('dejavusans', '', 7);
                 $this->SetTextColor(150, 150, 150);
-                $this->Cell(0, 10, 'Документ сформирован в DocBot — t.me/doscbot', 0, 0, 'C');
+                $this->Cell(0, 10, 'Документ сформирован в DocBot — t.me/docssz_bot', 0, 0, 'C');
             }
         };
         $pdf->SetCreator('DocBot');

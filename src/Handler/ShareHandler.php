@@ -36,7 +36,7 @@ class ShareHandler
         $token = $this->generateToken();
         $this->db->createDocumentShare($documentId, $telegramId, $token);
 
-        $link = "https://t.me/doscbot?start=doc_{$token}";
+        $link = "https://t.me/docssz_bot?start=doc_{$token}";
 
         $msg = "📨 Ссылка для заказчика:\n\n"
             . "{$link}\n\n"
@@ -337,7 +337,7 @@ class ShareHandler
             $profile = $this->db->getProfileByUserId($user['id']);
         }
 
-        $link = "https://t.me/doscbot?start=profile_{$profile['profile_token']}";
+        $link = "https://t.me/docssz_bot?start=profile_{$profile['profile_token']}";
 
         $msg = "👤 Ваша визитка\n\n"
             . "{$user['full_name']}\n"
