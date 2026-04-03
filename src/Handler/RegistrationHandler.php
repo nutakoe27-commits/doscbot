@@ -48,6 +48,17 @@ class RegistrationHandler
             $this->api->sendMessage($chatId, $info['prompt']);
         } else {
             $this->db->clearState($telegramId);
+
+            // Auto-create profile on registration completion
+            $user = $this->db->getUserByTelegramId($telegramId);
+            if ($user) {
+                $existingProfile = $this->db->getProfileByUserId($user['id']);
+                if (!$existingProfile) {
+                    $token = substr(bin2hex(random_bytes(8)), 0, 8);
+                    $this->db->createProfile($user['id'], $token);
+                }
+            }
+
             $menuKb = ['inline_keyboard' => [[['text' => '📋 Главное меню', 'callback_data' => 'main_menu']]]];
             $this->api->sendMessage($chatId, "✅ Регистрация завершена! Ваши реквизиты сохранены.", $menuKb);
         }

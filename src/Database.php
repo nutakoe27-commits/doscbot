@@ -342,6 +342,109 @@ class Database
         $this->pdo->prepare('DELETE FROM users WHERE telegram_id = ?')->execute([$telegramId]);
     }
 
+    // ── Document Shares ──
+
+    public function getDocumentShareByToken(string $token): ?array
+    {
+        $stmt = $this->pdo->prepare('SELECT * FROM document_shares WHERE share_token = ?');
+        $stmt->execute([$token]);
+        $row = $stmt->fetch();
+        return $row ?: null;
+    }
+
+    public function createDocumentShare(int $documentId, int $senderTelegramId, string $token): int
+    {
+        $stmt = $this->pdo->prepare(
+            'INSERT INTO document_shares (document_id, share_token, sender_telegram_id) VALUES (?, ?, ?)'
+        );
+        $stmt->execute([$documentId, $token, $senderTelegramId]);
+        return (int) $this->pdo->lastInsertId();
+    }
+
+    public function updateShareStatus(int $shareId, string $status): void
+    {
+        $extra = '';
+        if ($status === 'viewed') {
+            $extra = ', viewed_at = NOW()';
+        } elseif ($status === 'confirmed') {
+            $extra = ', confirmed_at = NOW()';
+        }
+        $stmt = $this->pdo->prepare("UPDATE document_shares SET status = ?{$extra} WHERE id = ?");
+        $stmt->execute([$status, $shareId]);
+    }
+
+    public function updateShareRecipient(int $shareId, int $recipientTelegramId): void
+    {
+        $stmt = $this->pdo->prepare('UPDATE document_shares SET recipient_telegram_id = ? WHERE id = ?');
+        $stmt->execute([$recipientTelegramId, $shareId]);
+    }
+
+    public function setShareComment(int $shareId, string $comment): void
+    {
+        $stmt = $this->pdo->prepare('UPDATE document_shares SET recipient_comment = ? WHERE id = ?');
+        $stmt->execute([$comment, $shareId]);
+    }
+
+    public function getShareByDocumentId(int $documentId): ?array
+    {
+        $stmt = $this->pdo->prepare('SELECT * FROM document_shares WHERE document_id = ? ORDER BY id DESC LIMIT 1');
+        $stmt->execute([$documentId]);
+        $row = $stmt->fetch();
+        return $row ?: null;
+    }
+
+    public function getShareById(int $shareId): ?array
+    {
+        $stmt = $this->pdo->prepare('SELECT * FROM document_shares WHERE id = ?');
+        $stmt->execute([$shareId]);
+        $row = $stmt->fetch();
+        return $row ?: null;
+    }
+
+    public function getUserDocumentsWithShares(int $userId, int $limit = 10): array
+    {
+        $stmt = $this->pdo->prepare(
+            'SELECT d.*, c.full_name AS client_name, '
+            . 'ds.status AS share_status, ds.confirmed_at AS share_confirmed_at '
+            . 'FROM documents d '
+            . 'JOIN clients c ON d.client_id = c.id '
+            . 'LEFT JOIN document_shares ds ON ds.document_id = d.id '
+            . 'WHERE d.user_id = ? '
+            . 'ORDER BY d.id DESC '
+            . 'LIMIT ?'
+        );
+        $stmt->execute([$userId, $limit]);
+        return $stmt->fetchAll();
+    }
+
+    // ── Profiles ──
+
+    public function getProfileByToken(string $token): ?array
+    {
+        $stmt = $this->pdo->prepare(
+            'SELECT p.*, u.full_name, u.inn, u.phone, u.telegram_id '
+            . 'FROM profiles p JOIN users u ON p.user_id = u.id WHERE p.profile_token = ?'
+        );
+        $stmt->execute([$token]);
+        $row = $stmt->fetch();
+        return $row ?: null;
+    }
+
+    public function getProfileByUserId(int $userId): ?array
+    {
+        $stmt = $this->pdo->prepare('SELECT * FROM profiles WHERE user_id = ?');
+        $stmt->execute([$userId]);
+        $row = $stmt->fetch();
+        return $row ?: null;
+    }
+
+    public function createProfile(int $userId, string $token): int
+    {
+        $stmt = $this->pdo->prepare('INSERT INTO profiles (user_id, profile_token) VALUES (?, ?)');
+        $stmt->execute([$userId, $token]);
+        return (int) $this->pdo->lastInsertId();
+    }
+
     // ── Payments ──
 
     public function createPayment(int $telegramId, string $yookassaId, float $amount, int $months): int

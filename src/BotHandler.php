@@ -10,6 +10,7 @@ use DocBot\Handler\ClientHandler;
 use DocBot\Handler\ExportHandler;
 use DocBot\Handler\AdminHandler;
 use DocBot\Handler\PaymentHandler;
+use DocBot\Handler\ShareHandler;
 
 class BotHandler
 {
@@ -26,6 +27,7 @@ class BotHandler
     private ExportHandler $exportHandler;
     private AdminHandler $adminHandler;
     private PaymentHandler $paymentHandler;
+    private ShareHandler $shareHandler;
 
     public function __construct(array $config)
     {
@@ -44,6 +46,7 @@ class BotHandler
         $this->exportHandler = new ExportHandler($this->db, $this->api, $this->storageDir);
         $this->adminHandler = new AdminHandler($this->db, $this->api, $adminId);
         $this->paymentHandler = new PaymentHandler($this->db, $this->api, $config);
+        $this->shareHandler = new ShareHandler($this->db, $this->api, $this->storageDir);
     }
 
     public function handle(array $update): void
@@ -79,7 +82,26 @@ class BotHandler
 
         // Commands
         if (str_starts_with($text, '/start')) {
+            if (str_starts_with($text, '/start ')) {
+                $param = substr($text, 7);
+                if (str_starts_with($param, 'doc_')) {
+                    $this->shareHandler->handleDocumentView($chatId, $telegramId, $param);
+                    return;
+                }
+                if (str_starts_with($param, 'profile_')) {
+                    $this->shareHandler->handleProfileView($chatId, $telegramId, $param);
+                    return;
+                }
+            }
             $this->handleStart($chatId, $telegramId);
+            return;
+        }
+        if ($text === '/docs') {
+            $this->shareHandler->handleMyDocuments($chatId, $telegramId);
+            return;
+        }
+        if ($text === '/profile') {
+            $this->shareHandler->handleProfileCommand($chatId, $telegramId);
             return;
         }
         if ($text === '/help') {
@@ -182,6 +204,7 @@ class BotHandler
                 [['text' => '📄 Создать договор', 'callback_data' => 'new_contract']],
                 [['text' => '📋 Создать акт', 'callback_data' => 'new_act']],
                 [['text' => '🧾 Выставить счёт', 'callback_data' => 'new_invoice']],
+                [['text' => '📄 Мои документы', 'callback_data' => 'my_documents']],
                 [['text' => '👥 Мои клиенты', 'callback_data' => 'my_clients']],
                 [['text' => '📤 Экспорт документов', 'callback_data' => 'export_docs']],
                 [['text' => '⚙️ Мои реквизиты', 'callback_data' => 'my_data']],
@@ -247,9 +270,55 @@ class BotHandler
             return;
         }
 
+        // Share callbacks (recipients may not be registered users)
+        if (str_starts_with($data, 'view_shared_pdf_')) {
+            $shareId = (int) substr($data, strlen('view_shared_pdf_'));
+            $this->shareHandler->handleViewSharedPdf($chatId, $shareId);
+            return;
+        }
+        if (str_starts_with($data, 'confirm_doc_')) {
+            $shareId = (int) substr($data, strlen('confirm_doc_'));
+            $this->shareHandler->handleConfirm($chatId, $telegramId, $shareId);
+            return;
+        }
+        if (str_starts_with($data, 'reject_doc_')) {
+            $shareId = (int) substr($data, strlen('reject_doc_'));
+            $this->shareHandler->handleRejectStart($chatId, $telegramId, $shareId);
+            return;
+        }
+        if (str_starts_with($data, 'hire_')) {
+            $targetUserId = (int) substr($data, strlen('hire_'));
+            $this->shareHandler->handleHire($chatId, $telegramId, $targetUserId);
+            return;
+        }
+        if ($data === 'about_docbot') {
+            $this->shareHandler->handleAboutDocBot($chatId);
+            return;
+        }
+        if ($data === 'start_bot') {
+            $this->handleStart($chatId, $telegramId);
+            return;
+        }
+
         $user = $this->db->getUserByTelegramId($telegramId);
         if (!$user || !$user['full_name']) {
             $this->api->sendMessage($chatId, 'Сначала завершите регистрацию. Нажмите /start');
+            return;
+        }
+
+        // Share / documents
+        if (str_starts_with($data, 'share_doc_')) {
+            $documentId = (int) substr($data, strlen('share_doc_'));
+            $this->shareHandler->handleShareStart($chatId, $telegramId, $documentId);
+            return;
+        }
+        if ($data === 'my_documents') {
+            $this->shareHandler->handleMyDocuments($chatId, $telegramId);
+            return;
+        }
+        if (str_starts_with($data, 'doc_detail_')) {
+            $documentId = (int) substr($data, strlen('doc_detail_'));
+            $this->shareHandler->handleDocumentDetail($chatId, $telegramId, $documentId);
             return;
         }
 
@@ -499,6 +568,13 @@ class BotHandler
             return;
         }
 
+        // Reject comment flow (share)
+        if (str_starts_with($state, 'reject_comment_')) {
+            $shareId = (int) substr($state, strlen('reject_comment_'));
+            $this->shareHandler->handleRejectComment($chatId, $telegramId, $text, $shareId);
+            return;
+        }
+
         // Unknown state — reset
         $this->db->clearState($telegramId);
         $this->showMainMenu($chatId);
@@ -513,9 +589,13 @@ class BotHandler
             . "📄 <b>Договор оказания услуг / подряда</b> — создайте договор с клиентом, выберите тип (услуги или подряд), тип заказчика (физлицо, ИП, юрлицо), укажите описание и сумму.\n\n"
             . "📋 <b>Акт сдачи-приёмки</b> — создайте акт к существующему договору.\n\n"
             . "🧾 <b>Счёт на оплату</b> — выставите счёт на оплату по существующему договору.\n\n"
+            . "📨 <b>Отправка заказчику</b> — отправьте документ заказчику на подтверждение через ссылку. Подтверждение имеет юридическую силу (п. 2 ст. 434 ГК РФ).\n\n"
+            . "👤 <b>Визитка</b> — поделитесь ссылкой на ваш профиль с потенциальными клиентами.\n\n"
             . "<b>Команды:</b>\n"
             . "/start — начать работу / главное меню\n"
             . "/menu — главное меню\n"
+            . "/docs — мои документы и их статусы\n"
+            . "/profile — моя визитка (ссылка для клиентов)\n"
             . "/mydata — посмотреть/изменить свои реквизиты\n"
             . "/export — экспорт документов в CSV\n"
             . "/deletedata — удалить все мои данные\n"

@@ -245,11 +245,14 @@ class ContractHandler
                 ? $this->pdf->generatePodryad($user, $client, $docData)
                 : $this->pdf->generateContract($user, $client, $docData);
             $docData['pdf_path'] = $pdfPath;
-            $this->db->createDocument($docData);
+            $documentId = $this->db->createDocument($docData);
             $this->db->clearState($telegramId);
 
             $this->api->sendDocument($chatId, $pdfPath, "Договор {$contractNumber}");
-            $menuKb = ['inline_keyboard' => [[['text' => '📋 Главное меню', 'callback_data' => 'main_menu']]]];
+            $menuKb = ['inline_keyboard' => [
+                [['text' => '📨 Отправить заказчику на подтверждение', 'callback_data' => 'share_doc_' . $documentId]],
+                [['text' => '📋 Главное меню', 'callback_data' => 'main_menu']],
+            ]];
             $this->api->sendMessage($chatId, "✅ Договор {$contractNumber} создан и отправлен.", $menuKb);
         } catch (\Throwable $e) {
             $this->api->sendMessage($chatId, '❌ Ошибка при генерации PDF: ' . $e->getMessage());

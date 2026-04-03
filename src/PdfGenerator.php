@@ -313,15 +313,23 @@ class PdfGenerator
 
     private function renderPdf(string $html, string $filename, string $title): string
     {
-        $pdf = new TCPDF('P', 'mm', 'A4', true, 'UTF-8', false);
+        $pdf = new class('P', 'mm', 'A4', true, 'UTF-8', false) extends TCPDF {
+            public function Footer(): void
+            {
+                $this->SetY(-15);
+                $this->SetFont('dejavusans', '', 7);
+                $this->SetTextColor(150, 150, 150);
+                $this->Cell(0, 10, 'Документ сформирован в DocBot — t.me/doscbot', 0, 0, 'C');
+            }
+        };
         $pdf->SetCreator('DocBot');
         $pdf->SetAuthor('DocBot');
         $pdf->SetTitle($title);
         $pdf->setPrintHeader(false);
-        $pdf->setPrintFooter(false);
+        $pdf->setPrintFooter(true);
         $pdf->SetFont('dejavusans', '', 11);
         $pdf->SetMargins(15, 15, 15);
-        $pdf->SetAutoPageBreak(true, 15);
+        $pdf->SetAutoPageBreak(true, 20);
         $pdf->AddPage();
         $pdf->writeHTML($html, true, false, true, false, '');
 
