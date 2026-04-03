@@ -74,10 +74,13 @@ class PaymentHandler
         }
 
         $amount = $plan['amount'];
+        $user = $this->db->getUserByTelegramId($telegramId);
 
         try {
             $client = new Client();
             $client->setAuth($this->shopId, $this->secretKey);
+
+            $description = "Подписка DocBot PRO на {$months} мес.";
 
             $payment = $client->createPayment([
                 'amount' => [
@@ -90,11 +93,29 @@ class PaymentHandler
                     'return_url' => $this->returnUrl,
                 ],
                 'capture' => true,
-                'description' => "Подписка DocBot PRO на {$months} мес.",
+                'description' => $description,
                 'metadata' => [
                     'telegram_id' => $telegramId,
                     'months' => $months,
                     'type' => 'subscription',
+                ],
+                'receipt' => [
+                    'customer' => [
+                        'email' => $user['email'] ?? 'noreply@krichigindocs.ru',
+                    ],
+                    'items' => [
+                        [
+                            'description' => $description,
+                            'quantity' => '1.00',
+                            'amount' => [
+                                'value' => $amount . '.00',
+                                'currency' => 'RUB',
+                            ],
+                            'vat_code' => 1,
+                            'payment_mode' => 'full_payment',
+                            'payment_subject' => 'service',
+                        ],
+                    ],
                 ],
             ], uniqid('', true));
 
