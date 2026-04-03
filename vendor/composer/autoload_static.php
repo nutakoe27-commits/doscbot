@@ -7,6 +7,14 @@ namespace Composer\Autoload;
 class ComposerStaticInitaecd9b44da9c3c38bf795aff202dd5b3
 {
     public static $prefixLengthsPsr4 = array (
+        'Y' =>
+        array (
+            'YooKassa\\' => 9,
+        ),
+        'P' =>
+        array (
+            'Psr\\Log\\' => 8,
+        ),
         'D' =>
         array (
             'DocBot\\' => 7,
@@ -14,6 +22,14 @@ class ComposerStaticInitaecd9b44da9c3c38bf795aff202dd5b3
     );
 
     public static $prefixDirsPsr4 = array (
+        'YooKassa\\' =>
+        array (
+            0 => __DIR__ . '/..' . '/yoomoney/yookassa-sdk-php/lib',
+        ),
+        'Psr\\Log\\' =>
+        array (
+            0 => __DIR__ . '/..' . '/psr/log/Psr/Log',
+        ),
         'DocBot\\' =>
         array (
             0 => __DIR__ . '/../..' . '/src',
@@ -23,17 +39,6 @@ class ComposerStaticInitaecd9b44da9c3c38bf795aff202dd5b3
     public static $classMap = array (
         'Composer\\InstalledVersions' => __DIR__ . '/..' . '/composer/InstalledVersions.php',
         'Datamatrix' => __DIR__ . '/..' . '/tecnickcom/tcpdf/include/barcodes/datamatrix.php',
-        'DocBot\\BotHandler' => __DIR__ . '/../..' . '/src/BotHandler.php',
-        'DocBot\\Database' => __DIR__ . '/../..' . '/src/Database.php',
-        'DocBot\\Handler\\ActHandler' => __DIR__ . '/../..' . '/src/Handler/ActHandler.php',
-        'DocBot\\Handler\\AdminHandler' => __DIR__ . '/../..' . '/src/Handler/AdminHandler.php',
-        'DocBot\\Handler\\ClientHandler' => __DIR__ . '/../..' . '/src/Handler/ClientHandler.php',
-        'DocBot\\Handler\\ContractHandler' => __DIR__ . '/../..' . '/src/Handler/ContractHandler.php',
-        'DocBot\\Handler\\ExportHandler' => __DIR__ . '/../..' . '/src/Handler/ExportHandler.php',
-        'DocBot\\Handler\\RegistrationHandler' => __DIR__ . '/../..' . '/src/Handler/RegistrationHandler.php',
-        'DocBot\\NumberToWords' => __DIR__ . '/../..' . '/src/NumberToWords.php',
-        'DocBot\\PdfGenerator' => __DIR__ . '/../..' . '/src/PdfGenerator.php',
-        'DocBot\\TelegramApi' => __DIR__ . '/../..' . '/src/TelegramApi.php',
         'PDF417' => __DIR__ . '/..' . '/tecnickcom/tcpdf/include/barcodes/pdf417.php',
         'QRcode' => __DIR__ . '/..' . '/tecnickcom/tcpdf/include/barcodes/qrcode.php',
         'TCPDF' => __DIR__ . '/..' . '/tecnickcom/tcpdf/tcpdf.php',

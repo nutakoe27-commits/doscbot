@@ -6,4 +6,3 @@ storage/csv/*
 .env
 *.log
 .ftp-deploy-sync-state.json
-vendor/ 

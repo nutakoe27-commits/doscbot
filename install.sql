@@ -84,3 +84,17 @@ ALTER TABLE `users` ADD COLUMN `subscription_end` DATE DEFAULT NULL AFTER `subsc
 
 -- Migration: тип договора (услуги / подряд)
 ALTER TABLE `documents` ADD COLUMN `contract_subtype` VARCHAR(20) DEFAULT NULL AFTER `doc_type`;
+
+-- Таблица платежей (ЮKassa)
+CREATE TABLE IF NOT EXISTS `payments` (
+    `id` INT AUTO_INCREMENT PRIMARY KEY,
+    `user_id` INT DEFAULT NULL,
+    `telegram_id` BIGINT NOT NULL,
+    `yookassa_payment_id` VARCHAR(100) DEFAULT NULL,
+    `amount` DECIMAL(12,2) NOT NULL,
+    `months` INT NOT NULL,
+    `status` ENUM('pending', 'succeeded', 'canceled') DEFAULT 'pending',
+    `created_at` DATETIME DEFAULT CURRENT_TIMESTAMP,
+    `paid_at` DATETIME DEFAULT NULL,
+    FOREIGN KEY (`user_id`) REFERENCES `users`(`id`) ON DELETE SET NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;

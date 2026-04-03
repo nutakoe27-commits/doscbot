@@ -17,4 +17,9 @@ return [
     // Telegram ID администратора (для /admin и ежедневных отчётов)
     // Узнать свой ID: напиши @userinfobot в Telegram
     'admin_telegram_id' => 0,
+
+    // ЮKassa
+    'yookassa_shop_id'  => '', // ID магазина из личного кабинета ЮKassa
+    'yookassa_secret'   => '', // Секретный ключ API
+    'yookassa_return_url' => 'https://www.krichigindocs.ru/payment_success.html', // Страница после оплаты
 ];

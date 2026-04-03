@@ -4,7 +4,8 @@
     "type": "project",
     "require": {
         "php": ">=8.1",
-        "tecnickcom/tcpdf": "^6.7"
+        "tecnickcom/tcpdf": "^6.7",
+        "yoomoney/yookassa-sdk-php": "^2.1"
     },
     "autoload": {
         "psr-4": {

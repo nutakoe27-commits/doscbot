@@ -1,0 +1,164 @@
+<?php
+/*
+ * The MIT License
+ *
+ * Copyright (c) 2026 "YooMoney", NBСO LLC
+ *
+ * Permission is hereby granted, free of charge, to any person obtaining a copy
+ * of this software and associated documentation files (the "Software"), to deal
+ * in the Software without restriction, including without limitation the rights
+ * to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+ * copies of the Software, and to permit persons to whom the Software is
+ * furnished to do so, subject to the following conditions:
+ *
+ * The above copyright notice and this permission notice shall be included in
+ * all copies or substantial portions of the Software.
+ *
+ * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+ * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+ * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+ * AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+ * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+ * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
+ * THE SOFTWARE.
+ */
+
+namespace Tests\YooKassa\Model\SelfEmployed;
+
+use YooKassa\Model\SelfEmployed\SelfEmployedConfirmationRedirect;
+use YooKassa\Model\SelfEmployed\SelfEmployedConfirmationType;
+
+class ConfirmationRedirectTest extends AbstractConfirmationTest
+{
+    /**
+     * @return SelfEmployedConfirmationRedirect
+     */
+    protected function getTestInstance()
+    {
+        return new SelfEmployedConfirmationRedirect();
+    }
+
+    /**
+     * @return string
+     */
+    protected function getExpectedType()
+    {
+        return SelfEmployedConfirmationType::REDIRECT;
+    }
+
+    /**
+     * @dataProvider validUrlDataProvider
+     * @param $value
+     */
+    public function testGetSetConfirmationUrl($value)
+    {
+        $instance = $this->getTestInstance();
+
+        self::assertNull($instance->getConfirmationUrl());
+        self::assertNull($instance->confirmationUrl);
+        self::assertNull($instance->confirmation_url);
+
+        $instance->setConfirmationUrl($value);
+        if ($value === null || $value === '') {
+            self::assertNull($instance->getConfirmationUrl());
+            self::assertNull($instance->confirmationUrl);
+            self::assertNull($instance->confirmation_url);
+        } else {
+            self::assertEquals($value, $instance->getConfirmationUrl());
+            self::assertEquals($value, $instance->confirmationUrl);
+            self::assertEquals($value, $instance->confirmation_url);
+        }
+
+        $instance->setConfirmationUrl(null);
+        self::assertNull($instance->getConfirmationUrl());
+        self::assertNull($instance->confirmationUrl);
+        self::assertNull($instance->confirmation_url);
+
+        $instance->confirmationUrl = $value;
+        if ($value === null || $value === '') {
+            self::assertNull($instance->getConfirmationUrl());
+            self::assertNull($instance->confirmationUrl);
+            self::assertNull($instance->confirmation_url);
+        } else {
+            self::assertEquals($value, $instance->getConfirmationUrl());
+            self::assertEquals($value, $instance->confirmationUrl);
+            self::assertEquals($value, $instance->confirmation_url);
+        }
+
+        $instance->confirmation_url = $value;
+        if ($value === null || $value === '') {
+            self::assertNull($instance->getConfirmationUrl());
+            self::assertNull($instance->confirmationUrl);
+            self::assertNull($instance->confirmation_url);
+        } else {
+            self::assertEquals($value, $instance->getConfirmationUrl());
+            self::assertEquals($value, $instance->confirmationUrl);
+            self::assertEquals($value, $instance->confirmation_url);
+        }
+    }
+
+    /**
+     * @dataProvider invalidUrlDataProvider
+     * @expectedException \InvalidArgumentException
+     * @param $value
+     */
+    public function testSetInvalidConfirmationUrl($value)
+    {
+        $instance = $this->getTestInstance();
+        $instance->setConfirmationUrl($value);
+    }
+
+    /**
+     * @dataProvider invalidUrlDataProvider
+     * @expectedException \InvalidArgumentException
+     * @param $value
+     */
+    public function testSetterInvalidConfirmationUrl($value)
+    {
+        $instance = $this->getTestInstance();
+        $instance->confirmationUrl = $value;
+    }
+
+    /**
+     * @dataProvider invalidUrlDataProvider
+     * @expectedException \InvalidArgumentException
+     * @param $value
+     */
+    public function testSetterInvalidConfirmation_url($value)
+    {
+        $instance = $this->getTestInstance();
+        $instance->confirmation_url = $value;
+    }
+
+    public function validEnforceDataProvider()
+    {
+        return array(
+            array(true),
+            array(false),
+            array(null),
+            array(''),
+            array(0),
+            array(1),
+            array(100),
+        );
+    }
+
+    public function validUrlDataProvider()
+    {
+        return array(
+            array('https://test.ru'),
+            array(null),
+            array(''),
+        );
+    }
+
+    public function invalidUrlDataProvider()
+    {
+        return array(
+            array(true),
+            array(false),
+            array(array()),
+            array(new \stdClass()),
+        );
+    }
+}

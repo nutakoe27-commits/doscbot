@@ -9,6 +9,7 @@ use DocBot\Handler\InvoiceHandler;
 use DocBot\Handler\ClientHandler;
 use DocBot\Handler\ExportHandler;
 use DocBot\Handler\AdminHandler;
+use DocBot\Handler\PaymentHandler;
 
 class BotHandler
 {
@@ -24,6 +25,7 @@ class BotHandler
     private ClientHandler $clientHandler;
     private ExportHandler $exportHandler;
     private AdminHandler $adminHandler;
+    private PaymentHandler $paymentHandler;
 
     public function __construct(array $config)
     {
@@ -41,6 +43,7 @@ class BotHandler
         $this->clientHandler = new ClientHandler($this->db, $this->api);
         $this->exportHandler = new ExportHandler($this->db, $this->api, $this->storageDir);
         $this->adminHandler = new AdminHandler($this->db, $this->api, $adminId);
+        $this->paymentHandler = new PaymentHandler($this->db, $this->api, $config);
     }
 
     public function handle(array $update): void
@@ -374,9 +377,21 @@ class BotHandler
             return;
         }
 
-        // Subscription info
+        // Subscription / payment
         if ($data === 'subscription_info') {
-            $this->showSubscriptionInfo($chatId, $user);
+            $this->paymentHandler->showPlans($chatId, $telegramId);
+            return;
+        }
+        if ($data === 'pay_1') {
+            $this->paymentHandler->createPayment($chatId, $telegramId, 1);
+            return;
+        }
+        if ($data === 'pay_3') {
+            $this->paymentHandler->createPayment($chatId, $telegramId, 3);
+            return;
+        }
+        if ($data === 'pay_6') {
+            $this->paymentHandler->createPayment($chatId, $telegramId, 6);
             return;
         }
 
@@ -532,40 +547,6 @@ class BotHandler
         if ($user && $user['full_name']) {
             $this->showMainMenu($chatId);
         }
-    }
-
-    // ── Subscription info ──
-
-    private function showSubscriptionInfo(int $chatId, array $user): void
-    {
-        $isActive = $this->db->isSubscriptionActive($user);
-        $monthCount = $this->db->countDocumentsThisMonth($user['id']);
-
-        $msg = "💳 <b>Подписка</b>\n\n"
-            . "Документов в этом месяце: {$monthCount}\n\n";
-
-        if (!$isActive) {
-            $remaining = max(0, 3 - $monthCount);
-            $msg .= "Текущий план: Бесплатный\n"
-                . "Осталось: {$remaining} из 3\n\n"
-                . "📎 <b>Подписка PRO — 299 руб./мес</b>\n"
-                . "• Безлимитная генерация договоров, актов и счетов\n"
-                . "• Неограниченное количество клиентов\n"
-                . "• Экспорт в CSV\n\n"
-                . "🛠 Оплата подписки скоро появится в боте. Следите за обновлениями!";
-        } else {
-            $endDate = $user['subscription_end'] ?? 'бессрочно';
-            $msg .= "✅ <b>Подписка PRO</b> — активна\n"
-                . "Действует до: {$endDate}\n\n"
-                . "Безлимитный доступ к генерации документов.";
-        }
-
-        $keyboard = [
-            'inline_keyboard' => [
-                [['text' => '« Назад в меню', 'callback_data' => 'main_menu']],
-            ],
-        ];
-        $this->api->sendMessage($chatId, $msg, $keyboard, 'HTML');
     }
 
     // ── PDF cleanup ──

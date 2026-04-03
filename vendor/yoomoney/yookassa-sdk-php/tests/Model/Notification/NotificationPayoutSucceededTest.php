@@ -1,0 +1,136 @@
+<?php
+/*
+ * The MIT License
+ *
+ * Copyright (c) 2026 "YooMoney", NBСO LLC
+ *
+ * Permission is hereby granted, free of charge, to any person obtaining a copy
+ * of this software and associated documentation files (the "Software"), to deal
+ * in the Software without restriction, including without limitation the rights
+ * to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+ * copies of the Software, and to permit persons to whom the Software is
+ * furnished to do so, subject to the following conditions:
+ *
+ * The above copyright notice and this permission notice shall be included in
+ * all copies or substantial portions of the Software.
+ *
+ * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+ * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+ * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+ * AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+ * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+ * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
+ * THE SOFTWARE.
+ */
+
+namespace Tests\YooKassa\Model\Notification;
+
+use YooKassa\Helpers\Random;
+use YooKassa\Model\Notification\NotificationPayoutSucceeded;
+use YooKassa\Model\NotificationEventType;
+use YooKassa\Model\NotificationType;
+use YooKassa\Model\PayoutInterface;
+use YooKassa\Model\PaymentMethodType;
+use YooKassa\Model\Payout;
+use YooKassa\Model\PayoutStatus;
+
+class NotificationPayoutSucceededTest extends AbstractNotificationTest
+{
+    /**
+     * @param array $source
+     * @return NotificationPayoutSucceeded
+     * @throws \Exception
+     */
+    protected function getTestInstance(array $source)
+    {
+        return new NotificationPayoutSucceeded($source);
+    }
+
+    /**
+     * @return string
+     */
+    protected function getExpectedType()
+    {
+        return NotificationType::NOTIFICATION;
+    }
+
+    /**
+     * @return string
+     */
+    protected function getExpectedEvent()
+    {
+        return NotificationEventType::PAYOUT_SUCCEEDED;
+    }
+
+    /**
+     * @dataProvider validDataProvider
+     * @param array $value
+     */
+    public function testGetObject(array $value)
+    {
+        $instance = $this->getTestInstance($value);
+        self::assertTrue($instance->getObject() instanceof PayoutInterface);
+        self::assertEquals($value['object']['id'], $instance->getObject()->getId());
+    }
+
+    /**
+     * @return array
+     * @throws \Exception
+     */
+    public function validDataProvider()
+    {
+        $result = array();
+        $payoutDestinations = array(
+            PaymentMethodType::YOO_MONEY => array(
+                'type' => PaymentMethodType::YOO_MONEY,
+                'account_number' => Random::str(11, 33, '1234567890')
+            ),
+            PaymentMethodType::BANK_CARD => array(
+                'type' => PaymentMethodType::BANK_CARD,
+                'card' => array(
+                    'number' => Random::str(16, 18, '1234567890')
+                )
+            ),
+        );
+
+        $result[] = array(
+            array(
+                'type' => $this->getExpectedType(),
+                'event' => $this->getExpectedEvent(),
+                'object' => array(
+                    'id' => Random::str(36, 50),
+                    'status' => Random::value(PayoutStatus::getValidValues()),
+                    'amount' => array('value' => Random::int(1, 10000), 'currency' => 'RUB'),
+                    'description' => Random::str(1, Payout::MAX_LENGTH_DESCRIPTION),
+                    'payout_destination' => $payoutDestinations[Random::value(array(PaymentMethodType::YOO_MONEY,PaymentMethodType::BANK_CARD))],
+                    'created_at' => date(YOOKASSA_DATE, mt_rand(111111111, time())),
+                    'test' => true,
+                    'deal' => array('id' => Random::str(36, 50)),
+                    'metadata' => array('order_id' => '37'),
+                ),
+            ),
+        );
+
+        for ($i = 0; $i < 20; $i++) {
+            $object = array(
+                'id' => Random::str(36, 50),
+                'status' => Random::value(PayoutStatus::getValidValues()),
+                'amount' =>  array('value' => Random::int(1, 10000), 'currency' => 'RUB'),
+                'description' => ($i == 0 ? null : ($i == 1 ? '' : ($i == 2 ? Random::str(Payout::MAX_LENGTH_DESCRIPTION)
+                    : Random::str(1, Payout::MAX_LENGTH_DESCRIPTION)))),
+                'payout_destination' => $payoutDestinations[Random::value(array(PaymentMethodType::YOO_MONEY,PaymentMethodType::BANK_CARD))],
+                'created_at' => date(YOOKASSA_DATE, mt_rand(1, time())),
+                'test' => (bool)($i % 2),
+                'metadata' => array(Random::str(3, 128, 'abcdefghijklmnopqrstuvwxyz') => Random::str(1, 512)),
+            );
+            $result[] = array(
+                array(
+                    'type' => $this->getExpectedType(),
+                    'event' => $this->getExpectedEvent(),
+                    'object' => $object,
+                ),
+            );
+        }
+        return $result;
+    }
+}

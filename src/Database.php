@@ -342,6 +342,37 @@ class Database
         $this->pdo->prepare('DELETE FROM users WHERE telegram_id = ?')->execute([$telegramId]);
     }
 
+    // ── Payments ──
+
+    public function createPayment(int $telegramId, string $yookassaId, float $amount, int $months): int
+    {
+        $user = $this->getUserByTelegramId($telegramId);
+        $userId = $user ? $user['id'] : null;
+
+        $stmt = $this->pdo->prepare(
+            'INSERT INTO payments (user_id, telegram_id, yookassa_payment_id, amount, months) VALUES (?, ?, ?, ?, ?)'
+        );
+        $stmt->execute([$userId, $telegramId, $yookassaId, $amount, $months]);
+        return (int) $this->pdo->lastInsertId();
+    }
+
+    public function updatePaymentStatus(string $yookassaId, string $status): void
+    {
+        $paidAt = $status === 'succeeded' ? date('Y-m-d H:i:s') : null;
+        $stmt = $this->pdo->prepare(
+            'UPDATE payments SET status = ?, paid_at = ? WHERE yookassa_payment_id = ?'
+        );
+        $stmt->execute([$status, $paidAt, $yookassaId]);
+    }
+
+    public function getPaymentByYookassaId(string $yookassaId): ?array
+    {
+        $stmt = $this->pdo->prepare('SELECT * FROM payments WHERE yookassa_payment_id = ?');
+        $stmt->execute([$yookassaId]);
+        $row = $stmt->fetch();
+        return $row ?: null;
+    }
+
     // ── User States ──
 
     public function getState(int $telegramId): ?array

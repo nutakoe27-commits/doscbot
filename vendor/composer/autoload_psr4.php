@@ -6,5 +6,7 @@ $vendorDir = dirname(__DIR__);
 $baseDir = dirname($vendorDir);
 
 return array(
+    'YooKassa\\' => array($vendorDir . '/yoomoney/yookassa-sdk-php/lib'),
+    'Psr\\Log\\' => array($vendorDir . '/psr/log/Psr/Log'),
     'DocBot\\' => array($baseDir . '/src'),
 );
