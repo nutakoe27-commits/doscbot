@@ -225,28 +225,28 @@ class PdfGenerator
             ? ($client['representative_name'] ?? $client['full_name'])
             : $client['full_name'];
 
-        // Определяем тип договора: podryad или service
-        $isPodryad = !empty($contract['contract_type']) && $contract['contract_type'] === 'podryad';
+        // contract_subtype — поле в таблице documents (значения: 'podryad' / 'service')
+        $isPodryad = ($contract['contract_subtype'] ?? '') === 'podryad';
 
         return [
-            '{{act_number}}'          => $actData['act_number'],
-            '{{contract_number}}'     => $contract['contract_number'],
-            '{{contract_date}}'       => $this->formatDate($contract['date_start']),
-            '{{city}}'                => $contract['city'] ?? 'Москва',
-            '{{act_date}}'            => $this->formatDate($actData['act_date']),
-            '{{executor_full_name}}'  => $user['full_name'],
-            '{{executor_inn}}'        => $user['inn'],
-            '{{client_display_name}}' => $client['full_name'],
-            '{{client_inn_line}}'     => $clientInnLine,
-            '{{client_inn}}'          => $client['inn'] ?? '',
+            '{{act_number}}'            => $actData['act_number'],
+            '{{contract_number}}'       => $contract['contract_number'],
+            '{{contract_date}}'         => $this->formatDate($contract['date_start']),
+            '{{city}}'                  => $contract['city'] ?? 'Москва',
+            '{{act_date}}'              => $this->formatDate($actData['act_date']),
+            '{{executor_full_name}}'    => $user['full_name'],
+            '{{executor_inn}}'          => $user['inn'],
+            '{{client_display_name}}'   => $client['full_name'],
+            '{{client_inn_line}}'       => $clientInnLine,
+            '{{client_inn}}'            => $client['inn'] ?? '',
             '{{client_signatory_name}}' => $clientSignatory,
-            '{{service_description}}' => $contract['service_description'],
-            '{{amount}}'              => number_format((float) $contract['amount'], 2, '.', ' '),
-            '{{amount_words}}'        => $contract['amount_words'],
-            '{{date_start}}'          => $this->formatDate($contract['date_start']),
-            '{{date_end}}'            => $this->formatDate($contract['date_end']),
-            '{{is_podryad}}'          => $isPodryad ? 'true' : '',
-            '{{client_remarks}}'      => $actData['client_remarks'] ?? '',
+            '{{service_description}}'   => $contract['service_description'],
+            '{{amount}}'                => number_format((float) $contract['amount'], 2, '.', ' '),
+            '{{amount_words}}'          => $contract['amount_words'],
+            '{{date_start}}'            => $this->formatDate($contract['date_start']),
+            '{{date_end}}'              => $this->formatDate($contract['date_end']),
+            '{{is_podryad}}'            => $isPodryad ? 'true' : '',
+            '{{client_remarks}}'        => $actData['client_remarks'] ?? '',
         ];
     }
 
