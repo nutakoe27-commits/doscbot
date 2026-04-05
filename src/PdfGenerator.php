@@ -101,9 +101,7 @@ class PdfGenerator
         $clientSignatory = $client['client_type'] === 'org'
             ? ($client['representative_name'] ?? $client['full_name'])
             : $client['full_name'];
-        $clientDisplayName = $client['client_type'] === 'org'
-            ? $client['full_name']
-            : $client['full_name'];
+        $clientDisplayName = $client['full_name'];
 
         return [
             '{{contract_number}}'         => $doc['contract_number'],
@@ -227,6 +225,9 @@ class PdfGenerator
             ? ($client['representative_name'] ?? $client['full_name'])
             : $client['full_name'];
 
+        // Определяем тип договора: podryad или service
+        $isPodryad = !empty($contract['contract_type']) && $contract['contract_type'] === 'podryad';
+
         return [
             '{{act_number}}'          => $actData['act_number'],
             '{{contract_number}}'     => $contract['contract_number'],
@@ -244,6 +245,8 @@ class PdfGenerator
             '{{amount_words}}'        => $contract['amount_words'],
             '{{date_start}}'          => $this->formatDate($contract['date_start']),
             '{{date_end}}'            => $this->formatDate($contract['date_end']),
+            '{{is_podryad}}'          => $isPodryad ? 'true' : '',
+            '{{client_remarks}}'      => $actData['client_remarks'] ?? '',
         ];
     }
 
@@ -263,15 +266,21 @@ class PdfGenerator
         return $lines;
     }
 
+    /**
+     * Обрабатывает {{#if var}}...{{else}}...{{/if}} блоки.
+     * Значение считается истинным, если оно непустое (non-empty).
+     */
     private function processSimpleConditionals(string $html, array $placeholders): string
     {
         return preg_replace_callback(
-            '/\{\{#if (\w+)\}\}(.*?)\{\{\/if\}\}/s',
+            '/\{\{#if (\w+)\}\}(.*?)(?:\{\{else\}\}(.*?))?\{\{\/if\}\}/s',
             function ($matches) use ($placeholders) {
-                $var = $matches[1];
-                $key = '{{' . $var . '}}';
+                $var   = $matches[1];
+                $key   = '{{' . $var . '}}';
                 $value = $placeholders[$key] ?? '';
-                return !empty($value) ? $matches[2] : '';
+                $then  = $matches[2];
+                $else  = $matches[3] ?? '';
+                return !empty($value) ? $then : $else;
             },
             $html
         );
