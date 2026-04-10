@@ -1,22 +1,10 @@
-name: Deploy to SpaceWeb
-
-on:
-  push:
-    branches:
-      - main # Укажите вашу основную ветку (main или master)
-
-jobs:
-  deploy:
-    name: Deploy
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-      
-      - name: Sync files via FTP
-        uses: SamKirkland/FTP-Deploy-Action@v4.3.4
-        with:
-          server: ${{ secrets.FTP_SERVER }}
-          username: ${{ secrets.FTP_USERNAME }}
-          password: ${{ secrets.FTP_PASSWORD }}
-          server-dir: /public_html/ # ВАЖНО: Укажите точный путь к папке сайта на сервере SpaceWeb
+- name: Deploy via SSH
+  uses: appleboy/ssh-action@v1
+  with:
+    host: ${{ secrets.VPS_HOST }}
+    username: root
+    key: ${{ secrets.VPS_SSH_KEY }}
+    script: |
+      cd /var/www/docbot
+      git pull origin main
+      composer install --no-dev --optimize-autoloader
