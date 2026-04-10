@@ -18,7 +18,7 @@ file_put_contents(__DIR__ . '/storage/webhook.log',
     date('Y-m-d H:i:s') . ' ' . $body . "\n", FILE_APPEND);
 
 $db = new \DocBot\Database($config['db_host'], $config['db_name'], $config['db_user'], $config['db_password']);
-$api = new \DocBot\TelegramApi($config['bot_token'], $config['ssl_verify'] ?? false);
+$api = new \DocBot\TelegramApi($config['bot_token'], $config['ssl_verify'] ?? false, $config['telegram_proxy'] ?? null);
 $handler = new \DocBot\Handler\PaymentHandler($db, $api, $config);
 
 try {

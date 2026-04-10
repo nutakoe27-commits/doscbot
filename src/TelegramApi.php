@@ -6,11 +6,13 @@ class TelegramApi
 {
     private string $token;
     private bool $sslVerify;
+    private ?string $proxy;
 
-    public function __construct(string $token, bool $sslVerify = false)
+    public function __construct(string $token, bool $sslVerify = false, ?string $proxy = null)
     {
         $this->token = $token;
         $this->sslVerify = $sslVerify;
+        $this->proxy = $proxy;
     }
 
     public function sendMessage(int $chatId, string $text, ?array $keyboard = null, string $parseMode = ''): void
@@ -42,19 +44,21 @@ class TelegramApi
 
         for ($attempt = 1; $attempt <= 3; $attempt++) {
             $ch = curl_init();
-            curl_setopt_array($ch, [
+            $opts = [
                 CURLOPT_URL            => $url,
                 CURLOPT_POST           => true,
                 CURLOPT_POSTFIELDS     => $post,
                 CURLOPT_RETURNTRANSFER => true,
-                CURLOPT_SSL_VERIFYPEER => false,
-                CURLOPT_SSL_VERIFYHOST => 0,
+                CURLOPT_SSL_VERIFYPEER => $this->sslVerify,
                 CURLOPT_CONNECTTIMEOUT => 10,
                 CURLOPT_TIMEOUT        => 30,
-                CURLOPT_RESOLVE        => ['api.telegram.org:443:149.154.166.110'],
-                CURLOPT_DNS_CACHE_TIMEOUT => 600,
                 CURLOPT_IPRESOLVE      => CURL_IPRESOLVE_V4,
-            ]);
+            ];
+            if ($this->proxy) {
+                $opts[CURLOPT_PROXY] = $this->proxy;
+                $opts[CURLOPT_PROXYTYPE] = CURLPROXY_SOCKS5_HOSTNAME;
+            }
+            curl_setopt_array($ch, $opts);
             $result = curl_exec($ch);
             $errno = curl_errno($ch);
 
@@ -86,19 +90,21 @@ class TelegramApi
 
         for ($attempt = 1; $attempt <= $maxRetries; $attempt++) {
             $ch = curl_init();
-            curl_setopt_array($ch, [
+            $opts = [
                 CURLOPT_URL            => $url,
                 CURLOPT_POST           => true,
                 CURLOPT_POSTFIELDS     => http_build_query($params),
                 CURLOPT_RETURNTRANSFER => true,
-                CURLOPT_SSL_VERIFYPEER => false,
-                CURLOPT_SSL_VERIFYHOST => 0,
+                CURLOPT_SSL_VERIFYPEER => $this->sslVerify,
                 CURLOPT_CONNECTTIMEOUT => 10,
                 CURLOPT_TIMEOUT        => 15,
-                CURLOPT_RESOLVE        => ['api.telegram.org:443:149.154.166.110'],
-                CURLOPT_DNS_CACHE_TIMEOUT => 600,
                 CURLOPT_IPRESOLVE      => CURL_IPRESOLVE_V4,
-            ]);
+            ];
+            if ($this->proxy) {
+                $opts[CURLOPT_PROXY] = $this->proxy;
+                $opts[CURLOPT_PROXYTYPE] = CURLPROXY_SOCKS5_HOSTNAME;
+            }
+            curl_setopt_array($ch, $opts);
             $result = curl_exec($ch);
             $errno = curl_errno($ch);
 
@@ -108,11 +114,10 @@ class TelegramApi
                 return json_decode($result, true);
             }
 
-            // Логируем ошибку и повторяем
             if ($attempt < $maxRetries) {
                 error_log("[DocBot] cURL retry {$attempt}/{$maxRetries} for {$method}: " . curl_error($ch));
                 curl_close($ch);
-                usleep(500000); // 0.5 сек пауза между попытками
+                usleep(500000);
             } else {
                 $this->logApiResult($method, $result, $ch);
                 curl_close($ch);

@@ -36,7 +36,8 @@ class BotHandler
         $adminId = $config['admin_telegram_id'] ?? 0;
         $this->db = new Database($config['db_host'], $config['db_name'], $config['db_user'], $config['db_password']);
         $this->pdf = new PdfGenerator(__DIR__ . '/../templates', $this->storageDir);
-        $this->api = new TelegramApi($config['bot_token'], $sslVerify);
+        $proxy = $config['telegram_proxy'] ?? null;
+        $this->api = new TelegramApi($config['bot_token'], $sslVerify, $proxy);
 
         $this->registrationHandler = new RegistrationHandler($this->db, $this->api);
         $this->contractHandler = new ContractHandler($this->db, $this->api, $this->pdf);

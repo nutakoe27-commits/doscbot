@@ -10,7 +10,7 @@ require_once __DIR__ . '/vendor/autoload.php';
 $config = require __DIR__ . '/config.php';
 
 $db = new \DocBot\Database($config['db_host'], $config['db_name'], $config['db_user'], $config['db_password']);
-$api = new \DocBot\TelegramApi($config['bot_token'], $config['ssl_verify'] ?? false);
+$api = new \DocBot\TelegramApi($config['bot_token'], $config['ssl_verify'] ?? false, $config['telegram_proxy'] ?? null);
 
 $contracts = $db->getExpiringContracts(3);
 $sent = 0;

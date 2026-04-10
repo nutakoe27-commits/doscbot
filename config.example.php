@@ -18,6 +18,10 @@ return [
     // Узнать свой ID: напиши @userinfobot в Telegram
     'admin_telegram_id' => 0,
 
+    // SOCKS5-прокси для запросов к Telegram API (если api.telegram.org заблокирован)
+    // null — прямое подключение, 'socks5://127.0.0.1:10808' — через локальный прокси
+    'telegram_proxy' => null,
+
     // ЮKassa
     'yookassa_shop_id'  => '', // ID магазина из личного кабинета ЮKassa
     'yookassa_secret'   => '', // Секретный ключ API
