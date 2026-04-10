@@ -21,6 +21,4 @@ jobs:
             git fetch origin
             git reset --hard origin/main
             composer install --no-dev --optimize-autoloader
-            pkill -f polling.php || true
-            sleep 1
-            nohup php /var/www/docbot/polling.php > /var/log/docbot-polling.log 2>&1 &
+            systemctl restart docbot || true
