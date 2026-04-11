@@ -50,6 +50,11 @@ class BotHandler
         $this->shareHandler = new ShareHandler($this->db, $this->api, $this->storageDir);
     }
 
+    public function reconnectDb(): void
+    {
+        $this->db->reconnectIfNeeded();
+    }
+
     public function handle(array $update): void
     {
         if (isset($update['callback_query'])) {

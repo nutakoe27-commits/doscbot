@@ -53,6 +53,7 @@ while (true) {
     foreach ($data['result'] as $update) {
         $offset = $update['update_id'] + 1;
         try {
+            $bot->reconnectDb();
             $bot->handle($update);
         } catch (\Throwable $e) {
             error_log("[DocBot] Polling error: " . $e->getMessage());

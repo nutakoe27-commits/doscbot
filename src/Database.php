@@ -8,6 +8,9 @@ use PDOException;
 class Database
 {
     private PDO $pdo;
+    private string $dsn;
+    private string $user;
+    private string $password;
 
     /** Белый список разрешённых колонок по таблицам */
     private const ALLOWED_COLUMNS = [
@@ -33,12 +36,31 @@ class Database
 
     public function __construct(string $host, string $dbName, string $user, string $password)
     {
-        $dsn = "mysql:host={$host};dbname={$dbName};charset=utf8mb4";
-        $this->pdo = new PDO($dsn, $user, $password, [
+        $this->dsn = "mysql:host={$host};dbname={$dbName};charset=utf8mb4";
+        $this->user = $user;
+        $this->password = $password;
+        $this->connect();
+    }
+
+    private function connect(): void
+    {
+        $this->pdo = new PDO($this->dsn, $this->user, $this->password, [
             PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION,
             PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC,
             PDO::ATTR_EMULATE_PREPARES => false,
         ]);
+    }
+
+    /**
+     * Переподключение при потере соединения (MySQL server has gone away)
+     */
+    public function reconnectIfNeeded(): void
+    {
+        try {
+            $this->pdo->query('SELECT 1');
+        } catch (\PDOException $e) {
+            $this->connect();
+        }
     }
 
     /**
