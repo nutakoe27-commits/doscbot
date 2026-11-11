@@ -22,6 +22,9 @@ def main(argv=None):
     export = commands.add_parser("export")
     export.add_argument("--kind", choices=["samples", "observations"], default="samples")
     export.add_argument("--output", required=True, type=Path)
+    rebuild = commands.add_parser("materialize", help="Build samples from newly collected data without network")
+    rebuild.add_argument("--event-id", required=True)
+    rebuild.add_argument("--dry-run", action="store_true")
     collect = commands.add_parser("collect")
     collect.add_argument("--once", action="store_true")
     collect.add_argument("--interval", type=int, default=300, help="Delay after each completed cycle")
@@ -51,6 +54,13 @@ def main(argv=None):
         if output == finding or finding in output.parents:
             parser.error("Exports must be outside finding")
         print(json.dumps({"exported": store.export(output, args.kind), "path": str(output)}))
+        return 0
+    if args.command == "materialize":
+        from .materialize import materialize
+        if not args.event_id.isdecimal() or len(args.event_id) > 20:
+            parser.error("A numeric source event ID is required")
+        print(json.dumps(materialize(store, state / "source/winline.sqlite3", args.event_id,
+                                     dry_run=args.dry_run), ensure_ascii=False, indent=2))
         return 0
     from .live import cycle
     state.mkdir(parents=True, exist_ok=True)

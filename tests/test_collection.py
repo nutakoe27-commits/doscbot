@@ -14,7 +14,7 @@ import unittest
 from unittest.mock import AsyncMock, patch
 
 from collector.source import ROOT, candidates, load_finding, sync_archive
-from collector.store import Store
+from collector.store import Store, sample_blocker
 
 FINDING, REVISION = load_finding(ROOT.parent / "finding")
 from winline.storage import connect, save_results, save_snapshot
@@ -114,6 +114,66 @@ class CollectionTests(unittest.TestCase):
         self.assertNotIn("final_result", json.loads(export.read_text())["payload"]["event"])
         with self.assertRaises(ValueError):
             self.store.export(export)
+
+    def bound_unknown(self):
+        event, statistics = self.sample_inputs()
+        event.update(url="https://winline.ru/stavki/sport/futbol/100",
+                     home="Команда А", away="Команда Б",
+                     statistics_url="https://winline.ru/stats/match/72334410",
+                     statistics_link_status="found")
+        statistics.update(match_phase="unknown", binding="observed_event_link", statistics_id="72334410",
+                          statistics_url=event["statistics_url"], event_url=event["url"])
+        return event, statistics
+
+    def test_unknown_widget_phase_requires_binding_and_remains_unknown(self):
+        event, statistics = self.bound_unknown()
+        for bad in [{**statistics, "binding": None}, {**statistics, "event_url": "https://winline.ru/stavki/sport/futbol/999"},
+                    {**statistics, "statistics_url": "https://winline.ru/stats/match/999"}]:
+            self.assertEqual(sample_blocker(event, bad, self.stamp), "statistics_phase_unconfirmed_binding")
+            self.assertFalse(self.store.save_sample(event, bad, {}, self.stamp))
+        self.assertTrue(self.store.save_sample(event, statistics, {}, self.stamp))
+        with closing(self.store.connect()) as db:
+            payload = json.loads(db.execute("SELECT payload FROM samples").fetchone()[0])
+        self.assertEqual(payload["team_statistics"]["match_phase"], "unknown")
+        self.assertEqual(payload["eligibility"]["basis"], "observed_event_link_before_kickoff")
+
+    def test_provider_explicit_started_status_overrides_unknown_header(self):
+        event, statistics = self.bound_unknown()
+        for state in ["finished", "live", {"_id": 100}]:
+            value = {**statistics, "structured_feed": {"match": {"status": state}}}
+            self.assertEqual(sample_blocker(event, value, self.stamp), "statistics_source_not_prematch")
+            self.assertFalse(self.store.save_sample(event, value, {}, self.stamp))
+
+    def test_materialize_uses_first_receipt_and_old_versions_without_network(self):
+        from collector.materialize import materialize
+        event, statistics = self.bound_unknown()
+        with closing(self.store.connect()) as db, db:
+            db.execute("INSERT INTO metadata VALUES ('source_archive',?)", (str(self.source),))
+        self.store.observation("market_document", "100", self.stamp, event)
+        self.store.observation("team_statistics", "100", self.stamp, statistics)
+        self.data["lines"][0]["V"][0] = 9.0
+        save_snapshot(self.db, self.capture, self.data, (self.at + timedelta(hours=1)).isoformat())
+        dry = materialize(self.store, self.source, "100", dry_run=True)
+        self.assertEqual(dry["reasons"], {"eligible": 1})
+        self.assertEqual(self.store.status()["samples"], 0)
+        self.assertEqual(materialize(self.store, self.source, "100")["saved"], 1)
+        self.assertEqual(materialize(self.store, self.source, "100")["reasons"], {"duplicate": 1})
+        with closing(self.store.connect()) as db:
+            payload = json.loads(db.execute("SELECT payload FROM samples").fetchone()[0])
+            received = db.execute("SELECT received_at FROM observations WHERE kind='team_statistics'").fetchone()[0]
+        self.assertEqual(payload["as_of"], received)
+        self.assertEqual(payload["archive_history"]["markets"][0]["values"][0], 2.0)
+
+    def test_later_market_document_cannot_be_backdated_during_materialization(self):
+        from collector.materialize import materialize
+        event, statistics = self.bound_unknown()
+        with closing(self.store.connect()) as db, db:
+            db.execute("INSERT INTO metadata VALUES ('source_archive',?)", (str(self.source),))
+        self.store.observation("team_statistics", "100", self.stamp, statistics)
+        self.store.observation("market_document", "100", self.stamp, event)
+        result = materialize(self.store, self.source, "100")
+        self.assertEqual(result["reasons"], {"market_document_missing": 1})
+        self.assertEqual(self.store.status()["samples"], 0)
 
     def test_no_samples_for_started_missing_finished_stale_or_wrong_team_data(self):
         event, statistics = self.sample_inputs()

@@ -10,7 +10,7 @@ import sys
 import time
 
 from .source import candidates, source_connection, sync_archive
-from .store import instant, now
+from .store import instant, now, sample_blocker
 
 
 def browser_options(chromium, headed=False):
@@ -37,7 +37,7 @@ async def collect_details(store, archive, chromium, sport, limit, *, headed=Fals
             "SELECT entity_id,max(observed_at) at FROM observations WHERE kind='event_attempt' GROUP BY entity_id")}
     events = candidates(archive, sport, limit, now(), attempts)
     result = {"selected": len(events), "market_documents": 0, "statistics": 0,
-              "samples": 0, "errors": [], "statistics_states": {}}
+              "samples": 0, "errors": [], "statistics_states": {}, "sample_outcomes": {}}
     if not events:
         return result
     async with async_playwright() as playwright:
@@ -89,8 +89,17 @@ async def collect_details(store, archive, chromium, sport, limit, *, headed=Fals
                     if statistics["state"] == "ok":
                         result["statistics"] += 1
                     cutoff = now()
+                    reason = sample_blocker(document, statistics, cutoff)
+                    outcome = {"statistics_phase": statistics.get("match_phase"),
+                               "capture_kind": statistics.get("capture_kind", "detailed"),
+                               "reason": reason}
+                    result["sample_outcomes"][event["source_event_id"]] = outcome
+                    if reason:
+                        continue
                     history = build_context(int(event["source_event_id"]), archive, as_of=cutoff)
-                    result["samples"] += int(store.save_sample(document, statistics, history, cutoff))
+                    saved = store.save_sample(document, statistics, history, cutoff)
+                    result["samples"] += int(saved)
+                    outcome["reason"] = "saved" if saved else "duplicate"
                 except Exception as error:
                     # Fixed class only: exception messages can contain URLs or page content.
                     result["errors"].append({"event_id": event["source_event_id"], "type": type(error).__name__})

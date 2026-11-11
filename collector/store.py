@@ -28,6 +28,63 @@ def digest(value):
     return hashlib.sha256(encoded(value).encode()).hexdigest()
 
 
+def check_observation_times(value, cutoff):
+    if isinstance(value, dict):
+        for key, item in value.items():
+            if key in ("observed_at", "attempted_at", "capture_started_at") and item:
+                if instant(item) > cutoff:
+                    raise ValueError("Source observation is later than the sample cutoff")
+            check_observation_times(item, cutoff)
+    elif isinstance(value, list):
+        for item in value:
+            check_observation_times(item, cutoff)
+
+
+def sample_blocker(event, statistics, as_of):
+    """Eligibility of a timed input; never relabel an unknown provider phase."""
+    cutoff = instant(as_of)
+    if event.get("phase") != "prematch":
+        return "event_not_prematch"
+    if not event.get("kickoff_at"):
+        return "kickoff_missing"
+    if instant(event["kickoff_at"]) <= cutoff:
+        return "kickoff_passed"
+    if not statistics or statistics.get("state") != "ok":
+        return "statistics_not_ok"
+    phase = statistics.get("match_phase")
+    if phase not in ("prematch", "unknown"):
+        return "statistics_not_prematch"
+    if statistics.get("capture_kind", "detailed") != "detailed":
+        return "statistics_not_detailed"
+    if statistics.get("source_event_id") != event["source_event_id"]:
+        raise ValueError("Statistics belongs to a different event")
+    # The upstream parser reports unknown for scheduled widgets. Its observed
+    # link binding plus the bookmaker's pre-match event and future kickoff
+    # establish availability before the event, not a provider phase claim.
+    if phase == "unknown":
+        identifier = str(statistics.get("statistics_id") or "")
+        expected = "https://winline.ru/stats/match/" + identifier
+        if (not identifier.isdecimal() or len(identifier) > 20 or
+                statistics.get("binding") != "observed_event_link" or
+                event.get("statistics_link_status") != "found" or
+                statistics.get("statistics_url") != expected or
+                event.get("statistics_url") != expected or
+                not event.get("url") or statistics.get("event_url") != event["url"]):
+            return "statistics_phase_unconfirmed_binding"
+    source_match = (statistics.get("structured_feed") or {}).get("match") or {}
+    state = source_match.get("status")
+    if isinstance(state, dict):
+        state = state.get("_id", state.get("id", state.get("name")))
+    state = str(state or "").strip().casefold()
+    if (state in ("finished", "ended", "closed", "ft", "100", "live", "in_progress", "inprogress") or
+            source_match.get("isLive") is True or source_match.get("is_live") is True):
+        return "statistics_source_not_prematch"
+    check_observation_times({"event": event, "statistics": statistics}, cutoff)
+    if (cutoff - instant(statistics["observed_at"])).total_seconds() > 3600:
+        return "statistics_stale"
+    return None
+
+
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS metadata (key TEXT PRIMARY KEY, value TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS observations (
@@ -85,18 +142,8 @@ class Store:
     def save_sample(self, event, statistics, history, as_of):
         """Only source facts known before kickoff enter the sample table."""
         cutoff = instant(as_of)
-        if event.get("phase") != "prematch" or not event.get("kickoff_at"):
+        if sample_blocker(event, statistics, as_of):
             return False
-        if instant(event["kickoff_at"]) <= cutoff:
-            return False
-        if not statistics or statistics.get("state") != "ok":
-            return False
-        if statistics.get("match_phase") != "prematch":
-            return False
-        if statistics.get("capture_kind", "detailed") != "detailed":
-            return False
-        if statistics.get("source_event_id") != event["source_event_id"]:
-            raise ValueError("Statistics belongs to a different event")
         # Finished/live target scores and generated answers are never features.
         event_keys = ("source_event_id", "sport", "sport_label", "home", "away",
                       "competition", "phase", "kickoff_at", "url", "statistics_url",
@@ -105,22 +152,14 @@ class Store:
                       "popular_observed_at", "popular_complete")
         payload = {"event": {k: event[k] for k in event_keys if k in event},
                    "team_statistics": statistics, "archive_history": history,
-                   "as_of": cutoff.isoformat(), "format": "doscbot.source-input.v1"}
+                   "as_of": cutoff.isoformat(), "format": "doscbot.source-input.v1",
+                   "eligibility": {"policy": "observed-input-before-kickoff-v2",
+                                   "event_phase": event["phase"],
+                                   "statistics_phase": statistics["match_phase"],
+                                   "basis": "observed_event_link_before_kickoff" if statistics["match_phase"] == "unknown"
+                                   else "explicit_prematch_statistics"}}
 
-        def check_time(value):
-            if isinstance(value, dict):
-                for key, item in value.items():
-                    if key in ("observed_at", "attempted_at", "capture_started_at") and item:
-                        if instant(item) > cutoff:
-                            raise ValueError("Source observation is later than the sample cutoff")
-                    check_time(item)
-            elif isinstance(value, list):
-                for item in value:
-                    check_time(item)
-
-        check_time(payload)
-        if (cutoff - instant(statistics["observed_at"])).total_seconds() > 3600:
-            return False
+        check_observation_times(payload, cutoff)
         with closing(self.connect()) as db, db:
             return bool(db.execute(
                 "INSERT OR IGNORE INTO samples "
