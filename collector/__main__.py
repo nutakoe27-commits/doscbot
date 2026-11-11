@@ -28,11 +28,15 @@ def main(argv=None):
     collect.add_argument("--sport", default="football")
     collect.add_argument("--event-limit", type=int, default=5)
     collect.add_argument("--history-days", type=int, default=2)
+    collect.add_argument("--headed", action="store_true",
+                         help="Use a normal browser for detailed statistics; requires DISPLAY (e.g. xvfb-run)")
     collect.add_argument("--chromium", default=os.environ.get("CHROMIUM_EXECUTABLE") or
                         shutil.which("chromium") or shutil.which("chromium-browser"))
     args = parser.parse_args(argv)
     if args.command == "collect" and (args.interval < 60 or not 1 <= args.event_limit <= 100 or not 0 <= args.history_days <= 30):
         parser.error("interval >= 60, event-limit 1..100, history-days 0..30 required")
+    if args.command == "collect" and args.headed and not os.environ.get("DISPLAY"):
+        parser.error("--headed requires DISPLAY; use xvfb-run -a")
     finding, revision = load_finding(args.finding)
     state = args.state_dir.expanduser().resolve()
     # Source code can be read; no data, configuration, or outputs may go into finding.
@@ -64,7 +68,7 @@ def main(argv=None):
         failures = 0
         while running:
             ok = cycle(store, state, finding, args.chromium, args.sport, args.event_limit, args.history_days,
-                       stopped=lambda: not running)
+                       stopped=lambda: not running, headed=args.headed)
             print(json.dumps(store.status(), ensure_ascii=False), flush=True)
             if args.once:
                 return 0 if ok else 2

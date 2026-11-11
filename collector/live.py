@@ -13,8 +13,8 @@ from .source import candidates, source_connection, sync_archive
 from .store import instant, now
 
 
-def browser_options(chromium):
-    options = {"headless": True}
+def browser_options(chromium, headed=False):
+    options = {"headless": not headed, "args": ["--disable-gpu"]}
     if chromium:
         options["executable_path"] = chromium
     proxy = os.environ.get("HTTPS_PROXY") or os.environ.get("https_proxy")
@@ -24,7 +24,7 @@ def browser_options(chromium):
     return options
 
 
-async def collect_details(store, archive, chromium, sport, limit):
+async def collect_details(store, archive, chromium, sport, limit, *, headed=False):
     from playwright.async_api import async_playwright
     from matchlab.statistics import collect_statistics, validate_statistics
     from matchlab.winline_markets import (ensure_event_page, read_marketbook,
@@ -41,9 +41,15 @@ async def collect_details(store, archive, chromium, sport, limit):
     if not events:
         return result
     async with async_playwright() as playwright:
-        browser = await playwright.chromium.launch(**browser_options(chromium))
+        browser = await playwright.chromium.launch(**browser_options(chromium, headed))
         try:
-            context = await browser.new_context()
+            context = await browser.new_context(locale="ru-RU", timezone_id="Europe/Moscow")
+            async def resources(route):
+                if route.request.resource_type in ("image", "media", "font"):
+                    await route.abort()
+                else:
+                    await route.continue_()
+            await context.route("**/*", resources)
             for event in events:
                 store.observation("event_attempt", event["source_event_id"], now(), {"url": event["url"]})
                 page = await context.new_page()
@@ -117,7 +123,8 @@ def run_source(command, finding, environment, stopped):
             process.wait()
 
 
-def cycle(store, state_dir, finding, chromium, sport, limit, history_days, stopped=lambda: False):
+def cycle(store, state_dir, finding, chromium, sport, limit, history_days, stopped=lambda: False,
+          *, headed=False):
     archive = Path(state_dir) / "source" / "winline.sqlite3"
     # Never adopt a pre-existing source archive, including an old finding database.
     with closing(store.connect()) as db, db:
@@ -154,7 +161,8 @@ def cycle(store, state_dir, finding, chromium, sport, limit, history_days, stopp
                        "reason": "no_new_source_snapshot"}
             store.finish_run(run, "source_error", details)
             return False
-        details = asyncio.run(collect_details(store, archive, chromium, sport, limit))
+        details = asyncio.run(collect_details(store, archive, chromium, sport, limit, headed=headed))
+        details["details_browser"] = "headed" if headed else "headless"
         details["source_exit_code"] = code
         details["imported_new_observations"] = counts
         state = "ok" if details["samples"] else "partial"

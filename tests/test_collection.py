@@ -172,8 +172,9 @@ class CollectionTests(unittest.TestCase):
         detail = {"selected": 1, "samples": 1, "errors": []}
         with patch("collector.live.run_source", side_effect=partial_source), \
              patch("collector.live.collect_details", new_callable=AsyncMock, return_value=detail) as collect:
-            self.assertFalse(cycle(self.store, state, FINDING, None, "football", 1, 0))
+            self.assertFalse(cycle(self.store, state, FINDING, None, "football", 1, 0, headed=True))
             collect.assert_awaited_once()
+            self.assertTrue(collect.await_args.kwargs["headed"])
         self.assertEqual(self.store.status()["last_run"]["state"], "partial")
         self.assertEqual(self.store.status()["observations"]["event"], 1)
 
@@ -218,9 +219,11 @@ class CollectionTests(unittest.TestCase):
             html += escape(section["text"]).replace("\n", "<br>")
             html += '<form>private-test-marker</form></div></section>'
         async def extract():
+            from collector.live import browser_options
             async with async_playwright() as p:
                 executable = os.environ.get("CHROMIUM_EXECUTABLE") or shutil.which("chromium") or shutil.which("chromium-browser")
-                browser = await p.chromium.launch(headless=True, **({"executable_path": executable} if executable else {}))
+                options = browser_options(executable, headed=os.environ.get("DOSCBOT_TEST_HEADED") == "1")
+                browser = await p.chromium.launch(**options)
                 try:
                     page = await browser.new_page()
                     await page.route("**/*", lambda route: route.abort())
