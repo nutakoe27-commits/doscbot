@@ -1,8 +1,0 @@
-config.php
-storage/pdf/*
-!storage/pdf/.gitkeep
-storage/csv/*
-!storage/csv/.gitkeep
-.env
-*.log
-.ftp-deploy-sync-state.json
