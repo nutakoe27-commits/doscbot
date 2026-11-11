@@ -1,0 +1,167 @@
+"""Bounded collection using the exact public parsers pinned from finding."""
+
+import asyncio
+from contextlib import closing
+import os
+from pathlib import Path
+import signal
+import subprocess
+import sys
+import time
+
+from .source import candidates, source_connection, sync_archive
+from .store import instant, now
+
+
+def browser_options(chromium):
+    options = {"headless": True}
+    if chromium:
+        options["executable_path"] = chromium
+    proxy = os.environ.get("HTTPS_PROXY") or os.environ.get("https_proxy")
+    if proxy:
+        options["proxy"] = {"server": proxy}
+    # Trust comes from the managed OS certificate store; verification remains enabled.
+    return options
+
+
+async def collect_details(store, archive, chromium, sport, limit):
+    from playwright.async_api import async_playwright
+    from matchlab.statistics import collect_statistics, validate_statistics
+    from matchlab.winline_markets import (ensure_event_page, read_marketbook,
+                                        discover_statistics_link, market_document)
+    from matchlab.worker_protocol import market_feed
+    from winline.team_context import build_context
+
+    with closing(store.connect()) as db:
+        attempts = {r["entity_id"]: r["at"] for r in db.execute(
+            "SELECT entity_id,max(observed_at) at FROM observations WHERE kind='event_attempt' GROUP BY entity_id")}
+    events = candidates(archive, sport, limit, now(), attempts)
+    result = {"selected": len(events), "market_documents": 0, "statistics": 0,
+              "samples": 0, "errors": [], "statistics_states": {}}
+    if not events:
+        return result
+    async with async_playwright() as playwright:
+        browser = await playwright.chromium.launch(**browser_options(chromium))
+        try:
+            context = await browser.new_context()
+            for event in events:
+                store.observation("event_attempt", event["source_event_id"], now(), {"url": event["url"]})
+                page = await context.new_page()
+                sockets = []
+                def opened(socket):
+                    if market_feed("winline", socket.url):
+                        state = {"last_at": None, "connected": True}
+                        sockets.append(state)
+                        socket.on("framereceived", lambda data: state.update(last_at=now()))
+                        socket.on("close", lambda *args: state.update(connected=False))
+                page.on("websocket", opened)
+                try:
+                    response = await page.goto(event["url"], wait_until="domcontentloaded", timeout=45000)
+                    if response and response.status in (401, 403, 429):
+                        result["errors"].append({"event_id": event["source_event_id"], "type": "source_blocked"})
+                        break
+                    await ensure_event_page(page, event["url"], event)
+                    raw = await read_marketbook(page)
+                    if not any(s["connected"] and s["last_at"] and
+                               (instant(now())-instant(s["last_at"])).total_seconds() <= 180 for s in sockets):
+                        raise ValueError("No current source market feed")
+                    raw["statistics_links"] = await discover_statistics_link(page, raw)
+                    document = market_document(raw, page.url, now(), event)
+                    store.observation("market_document", event["source_event_id"], document["observed_at"], document)
+                    result["market_documents"] += 1
+                    if document.get("statistics_link_status") != "found":
+                        result["statistics_states"][event["source_event_id"]] = "missing_link"
+                        continue
+                    job = {**document, "url": document["url"]}
+                    statistics = await collect_statistics(page, job, enable_feed=True)
+                    statistics = validate_statistics(statistics, document)
+                    store.observation("team_statistics", event["source_event_id"], statistics["attempted_at"], statistics)
+                    result["statistics_states"][event["source_event_id"]] = statistics["state"]
+                    if statistics["state"] == "blocked":
+                        result["errors"].append({"event_id": event["source_event_id"], "type": "statistics_blocked"})
+                        break
+                    if statistics["state"] == "ok":
+                        result["statistics"] += 1
+                    cutoff = now()
+                    history = build_context(int(event["source_event_id"]), archive, as_of=cutoff)
+                    result["samples"] += int(store.save_sample(document, statistics, history, cutoff))
+                except Exception as error:
+                    # Fixed class only: exception messages can contain URLs or page content.
+                    result["errors"].append({"event_id": event["source_event_id"], "type": type(error).__name__})
+                finally:
+                    await page.close()
+                await asyncio.sleep(1)
+        finally:
+            await browser.close()
+    return result
+
+
+def run_source(command, finding, environment, stopped):
+    process = subprocess.Popen(command, cwd=finding, env=environment, start_new_session=True)
+    deadline = time.monotonic() + 600
+    try:
+        while process.poll() is None:
+            if stopped() or time.monotonic() >= deadline:
+                os.killpg(process.pid, signal.SIGINT)
+                try:
+                    process.wait(timeout=20)
+                except subprocess.TimeoutExpired:
+                    os.killpg(process.pid, signal.SIGKILL)
+                    process.wait()
+                return 130 if stopped() else 124
+            time.sleep(0.25)
+        return process.returncode
+    finally:
+        if process.poll() is None:
+            os.killpg(process.pid, signal.SIGKILL)
+            process.wait()
+
+
+def cycle(store, state_dir, finding, chromium, sport, limit, history_days, stopped=lambda: False):
+    archive = Path(state_dir) / "source" / "winline.sqlite3"
+    # Never adopt a pre-existing source archive, including an old finding database.
+    with closing(store.connect()) as db, db:
+        owner = db.execute("SELECT value FROM metadata WHERE key='source_archive'").fetchone()
+        if archive.exists() and (not owner or owner[0] != str(archive.resolve())):
+            raise ValueError("Refusing a pre-existing source archive; choose a new empty state directory")
+        db.execute("INSERT OR REPLACE INTO metadata VALUES ('source_archive',?)", (str(archive.resolve()),))
+    archive.parent.mkdir(parents=True, exist_ok=True)
+    command = [sys.executable, "-m", "winline.collect", "--database", str(archive),
+               "--seconds", "5", "--history-days", str(history_days),
+               "--no-expand-markets", "--no-snapshot-files", "--light-snapshots"]
+    if chromium:
+        command += ["--chromium", chromium]
+    # Only pinned code is used; finding's configuration is not loaded.
+    environment = dict(os.environ)
+    environment["PYTHONPATH"] = str(finding)
+    run = store.begin_run()
+    try:
+        before = 0
+        if archive.exists():
+            with closing(source_connection(archive)) as db:
+                before = db.execute("SELECT coalesce(max(id),0) FROM snapshots").fetchone()[0]
+        code = run_source(command, finding, environment, stopped)
+        counts = sync_archive(store, archive) if archive.exists() else {}
+        if stopped():
+            store.finish_run(run, "stopped", {"imported_new_observations": counts})
+            return False
+        fresh = False
+        if archive.exists():
+            with closing(source_connection(archive)) as db:
+                fresh = db.execute("SELECT coalesce(max(id),0) FROM snapshots").fetchone()[0] > before
+        if not fresh:
+            details = {"source_exit_code": code, "imported_new_observations": counts,
+                       "reason": "no_new_source_snapshot"}
+            store.finish_run(run, "source_error", details)
+            return False
+        details = asyncio.run(collect_details(store, archive, chromium, sport, limit))
+        details["source_exit_code"] = code
+        details["imported_new_observations"] = counts
+        state = "ok" if details["samples"] else "partial"
+        if details["errors"] or code:
+            state = "partial"
+        store.finish_run(run, state, details)
+        return state == "ok"
+    except Exception as error:
+        store.finish_run(run, "error", {"type": type(error).__name__})
+        return False
