@@ -7,7 +7,7 @@ from urllib.parse import urlsplit, parse_qsl
 
 from .store import now
 
-PRIVATE = re.compile(r"password|passwd|token|secret|authorization|cookie|session|api.?key|signature|email|phone|address|^(key|csrf|sid|jwt|auth|ip|ipv4|ipv6|user_?id|device_?id|client_?id)$", re.I)
+PRIVATE = re.compile(r"password|passwd|token|secret|authorization|cookie|(?:^|[_-])session|api.?key|signature|email|phone|address|^(key|csrf|sid|jwt|auth|ip|ipv4|ipv6|user_?id|device_?id|client_?id)$", re.I)
 PROVIDERS = {"statshub.yunai.tech", "statshub.sportradar.com"}
 DATA_HOSTS = PROVIDERS | {"sh.fn.yunai.tech"}
 
@@ -62,7 +62,7 @@ def sanitize(value):
 
 class WidgetCapture:
     def __init__(self, page, statistics_id, *, max_response=2 * 1024 * 1024,
-                 max_total=8 * 1024 * 1024, max_records=100):
+                 max_total=16 * 1024 * 1024, max_records=200):
         self.page, self.statistics_id = page, str(statistics_id)
         self.max_response, self.max_total, self.max_records = max_response, max_total, max_records
         self.records, self.pending = [], set()
@@ -90,7 +90,7 @@ class WidgetCapture:
             self.summary["responses"] += 1
             if response.status in (401, 403, 429) and len(self.summary["http_errors"]) < 10:
                 self.summary["http_errors"].append({**endpoint(response.url), "status": response.status})
-            if len(self.pending) >= 8 or len(self.records) + len(self.pending) >= self.max_records:
+            if len(self.pending) >= 16 or len(self.records) + len(self.pending) >= self.max_records:
                 self.skip("record_limit")
                 return
             task = asyncio.create_task(self.read(response, frame))

@@ -18,7 +18,7 @@
     console.info("Диагностика уже установлена", window.doscbotProbe.status());
     return;
   }
-  const PRIVATE = /password|passwd|token|secret|authorization|cookie|session|api.?key|signature|email|phone|address|^(key|csrf|sid|jwt|auth|ip|ipv4|ipv6|user_?id|device_?id|client_?id)$/i;
+  const PRIVATE = /password|passwd|token|secret|authorization|cookie|(?:^|[_-])session|api.?key|signature|email|phone|address|^(key|csrf|sid|jwt|auth|ip|ipv4|ipv6|user_?id|device_?id|client_?id)$/i;
   const state = {
     format: "doscbot.browser-widget-probe.v1",
     capture_id: crypto.randomUUID(),

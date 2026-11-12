@@ -27,6 +27,9 @@ def main(argv=None):
     parser.add_argument("--finding", type=Path, default=Path(os.environ.get("FINDING_SOURCE_DIR", ROOT.parent / "finding")))
     commands = parser.add_subparsers(dest="command", required=True)
     commands.add_parser("status")
+    inspect = commands.add_parser("inspect-widget", help="Inspect a browser JSON probe without opening a database or network")
+    inspect.add_argument("--input", required=True, type=Path)
+    inspect.add_argument("--output", required=True, type=Path)
     export = commands.add_parser("export")
     export.add_argument("--kind", choices=["samples", "observations"], default="samples")
     export.add_argument("--output", required=True, type=Path)
@@ -47,6 +50,20 @@ def main(argv=None):
     collect.add_argument("--chromium", default=os.environ.get("CHROMIUM_EXECUTABLE") or
                         shutil.which("chromium") or shutil.which("chromium-browser"))
     args = parser.parse_args(argv)
+    if args.command == "inspect-widget":
+        from .widget_data import inspect_probe
+        output = args.output.expanduser().resolve()
+        finding_root = args.finding.expanduser().resolve()
+        if output == finding_root or finding_root in output.parents:
+            parser.error("Diagnostics must be written outside finding")
+        report = inspect_probe(args.input.expanduser().resolve())
+        output.parent.mkdir(parents=True, exist_ok=True)
+        with output.open("x", encoding="utf-8") as handle:
+            json.dump(report, handle, ensure_ascii=False, indent=2, allow_nan=False)
+            handle.write("\n")
+        print(json.dumps({"path": str(output), "statistics_id": report["statistics_id"],
+                          "coverage": report["coverage"]}, ensure_ascii=False, indent=2))
+        return 0
     if args.command == "collect" and (args.interval < 60 or not 1 <= args.event_limit <= 100 or not 0 <= args.history_days <= 30):
         parser.error("interval >= 60, event-limit 1..100, history-days 0..30 required")
     if args.command == "collect" and (not 15 <= args.result_timeout <= 90 or not 1 <= args.result_limit <= 20):

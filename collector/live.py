@@ -32,6 +32,8 @@ async def collect_details(store, archive, chromium, sport, limit, *, headed=Fals
     from matchlab.worker_protocol import market_feed
     from winline.team_context import build_context
     from .widget_capture import WidgetCapture
+    from .widget_data import normalize_widget
+    from .widget_views import collect_widget_views
 
     with closing(store.connect()) as db:
         attempts = {r["entity_id"]: r["at"] for r in db.execute(
@@ -39,7 +41,8 @@ async def collect_details(store, archive, chromium, sport, limit, *, headed=Fals
     events = candidates(archive, sport, limit, now(), attempts, event_id=event_id)
     result = {"selected": len(events), "market_documents": 0, "statistics": 0,
               "samples": 0, "errors": [], "statistics_states": {}, "sample_outcomes": {},
-              "widget_json": 0, "widget_capture_states": {}}
+              "widget_json": 0, "widget_capture_states": {}, "widget_data": 0,
+              "widget_coverage": {}}
     if not events:
         if event_id is not None:
             result["errors"].append({"event_id": event_id, "type": "requested_event_not_in_fresh_prematch_catalog"})
@@ -85,14 +88,33 @@ async def collect_details(store, archive, chromium, sport, limit, *, headed=Fals
                     job = {**document, "url": document["url"]}
                     observer = WidgetCapture(page, document["statistics_url"].rstrip("/").rsplit("/", 1)[-1])
                     observer.start()
+                    views = None
                     try:
                         statistics = await collect_statistics(page, job, enable_feed=True)
+                        if statistics.get("state") == "ok":
+                            views = await collect_widget_views(page, observer.statistics_id)
                     finally:
                         records, summary = await observer.finish()
                         result["widget_capture_states"][event["source_event_id"]] = summary
                         for record in records:
                             store.observation("widget_json", event["source_event_id"], record["observed_at"], record)
                         result["widget_json"] += len(records)
+                        try:
+                            rich = normalize_widget(records, observer.statistics_id,
+                                event_id=event["source_event_id"], binding="observed_event_link", views=views)
+                        except (ValueError, TypeError, KeyError, AttributeError):
+                            # An unfamiliar rich schema must not discard the
+                            # independently validated legacy input or raw JSON.
+                            result["widget_coverage"][event["source_event_id"]] = {
+                                "complete": False, "state": "normalization_error"}
+                        else:
+                            if summary["state"] != "captured":
+                                rich["coverage"]["complete"] = False
+                            rich["capture"] = summary
+                            rich["observed_at"] = now()
+                            store.observation("widget_data", event["source_event_id"], rich["observed_at"], rich)
+                            result["widget_data"] += 1
+                            result["widget_coverage"][event["source_event_id"]] = rich["coverage"]
                     statistics = validate_statistics(statistics, document)
                     store.observation("team_statistics", event["source_event_id"], statistics["attempted_at"], statistics)
                     result["statistics_states"][event["source_event_id"]] = statistics["state"]
