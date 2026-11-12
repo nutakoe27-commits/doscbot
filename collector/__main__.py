@@ -31,8 +31,10 @@ def main(argv=None):
     commands.add_parser("status")
     check=commands.add_parser('audit',help='Read-only evidence of rich data for each requested sport')
     check.add_argument('--sport',default=DEFAULT_SPORTS)
-    reset=commands.add_parser('reset-data',help='Audit-gated rotation of owned databases with a recoverable backup')
+    reset=commands.add_parser('reset-data',help='Audit-gated reset of owned databases; backup by default')
     reset.add_argument('--apply',action='store_true')
+    reset.add_argument('--discard-old-data',action='store_true',
+                       help='After a successful reset, permanently remove old data and verified collector backups; no retention timer')
     reset.add_argument('--sport',default=DEFAULT_SPORTS)
     monitor = commands.add_parser("monitor", help="Read-only live terminal dashboard; runs alongside the collector")
     monitor.add_argument("--once", action="store_true", help="Print one snapshot without interactive screen")
@@ -72,9 +74,10 @@ def main(argv=None):
         else:
             from .reset import reset_data
             from .source import PIN
-            result=reset_data(state,args.finding,PIN['commit'],apply=args.apply,sports=args.sport)
+            result=reset_data(state,args.finding,PIN['commit'],apply=args.apply,sports=args.sport,
+                              discard_old_data=args.discard_old_data)
         print(json.dumps(result,ensure_ascii=False,indent=2))
-        return 0
+        return 1 if result.get('discard_errors') else 0
     if args.command=='collect':
         selection(args.sport)
         if not 30<=args.widget_budget<=300:

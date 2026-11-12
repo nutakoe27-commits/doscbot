@@ -1,5 +1,5 @@
 import copy
-from contextlib import closing
+from contextlib import closing,redirect_stdout
 from datetime import datetime,timedelta,timezone
 import fcntl
 import io
@@ -98,6 +98,8 @@ class ResetTests(unittest.TestCase):
         before=self.store.status()
         self.assertFalse(reset_data(self.state,self.finding,'fixture-revision')['ready'])
         with self.assertRaises(ValueError):reset_data(self.state,self.finding,'fixture-revision',apply=True)
+        with self.assertRaises(ValueError):
+            reset_data(self.state,self.finding,'fixture-revision',apply=True,discard_old_data=True)
         self.assertEqual(self.store.status(),before)
         self.qualify()
         self.assertTrue(audit(self.state)['ready_to_reset'])
@@ -143,6 +145,112 @@ class ResetTests(unittest.TestCase):
         self.assertEqual(widget_blocker(event,stats,bad),'widget_sport_unverified')
         bad=copy.deepcopy(widget);bad['observed_at']=(datetime.now(timezone.utc)+timedelta(hours=1)).isoformat()
         with self.assertRaises(ValueError):self.store.save_sample(event,stats,{},self.at,widget=bad)
+
+    def previous_backup(self):
+        self.qualify()
+        saved=reset_data(self.state,self.finding,'fixture-revision',apply=True)
+        self.qualify()
+        return Path(saved['backup'])
+
+    def test_discard_preview_keeps_current_data_and_existing_backups(self):
+        previous=self.previous_backup()
+        result=reset_data(self.state,self.finding,'fixture-revision',discard_old_data=True)
+        self.assertFalse(result['reset'])
+        self.assertFalse(result['old_data_discarded'])
+        self.assertIn(str(previous),result['discard_backups'])
+        self.assertTrue((previous/'dataset.sqlite3').exists())
+        self.assertEqual(self.store.status()['samples'],5)
+
+    def test_discard_removes_current_data_and_verified_previous_backups(self):
+        previous=self.previous_backup()
+        result=reset_data(self.state,self.finding,'fixture-revision',apply=True,discard_old_data=True)
+        self.assertTrue(result['reset'])
+        self.assertTrue(result['old_data_discarded'])
+        self.assertIsNone(result['backup'])
+        self.assertEqual(result['discard_errors'],[])
+        self.assertIn(str(previous),result['discarded_backups'])
+        self.assertEqual(len(result['discarded_backups']),2)
+        self.assertEqual(list((self.state/'backups').iterdir()),[])
+        self.assertFalse(self.archive.exists())
+        self.assertEqual(self.store.status()['samples'],0)
+        self.assertEqual(self.store.status()['observations'],{})
+        self.assertEqual((self.state/'dataset.sqlite3').stat().st_uid,previous.parent.stat().st_uid)
+
+    def test_discard_preserves_unknown_backup_files_and_finding(self):
+        previous=self.previous_backup()
+        # A valid old reset containing an unexpected user file is not purged.
+        (previous/'notes.txt').write_text('keep this user file')
+        unknown=self.state/'backups'/'manual-copy';unknown.mkdir()
+        (unknown/'dataset.sqlite3').write_bytes(b'not a collector backup')
+        self.finding.mkdir();(self.finding/'old.sqlite3').write_bytes(b'never touch finding')
+        link=self.state/'backups'/'external-link';link.symlink_to(self.finding,target_is_directory=True)
+        foreign=self.state/'backups'/'foreign';foreign.mkdir()
+        manifest=json.loads((previous/'manifest.json').read_text());manifest['backup']=str(foreign)
+        (foreign/'manifest.json').write_text(json.dumps(manifest))
+        with closing(sqlite3.connect(foreign/'dataset.sqlite3')) as db,db:
+            db.execute('CREATE TABLE metadata(key TEXT,value TEXT)')
+            db.execute("INSERT INTO metadata VALUES ('owner','someone-else')")
+        result=reset_data(self.state,self.finding,'fixture-revision',apply=True,discard_old_data=True)
+        self.assertTrue(result['old_data_discarded'])
+        self.assertEqual({r['path'] for r in result['retained_backups']},{str(previous),str(unknown),str(link),str(foreign)})
+        self.assertEqual((previous/'notes.txt').read_text(),'keep this user file')
+        self.assertEqual((unknown/'dataset.sqlite3').read_bytes(),b'not a collector backup')
+        self.assertEqual((self.finding/'old.sqlite3').read_bytes(),b'never touch finding')
+        self.assertTrue(link.is_symlink())
+        self.assertTrue((foreign/'dataset.sqlite3').is_file())
+
+    def test_discard_refuses_active_writer_before_deleting_old_backups(self):
+        previous=self.previous_backup()
+        with (self.state/'collector.lock').open('w') as lock:
+            fcntl.flock(lock,fcntl.LOCK_EX|fcntl.LOCK_NB)
+            with self.assertRaises(ValueError):
+                reset_data(self.state,self.finding,'fixture-revision',apply=True,discard_old_data=True)
+        self.assertTrue(previous.is_dir())
+        self.assertEqual(self.store.status()['samples'],5)
+
+    def test_discard_refuses_redirected_sidecars_before_opening_any_database(self):
+        self.qualify();self.finding.mkdir()
+        original=self.finding/'old-data';original.write_bytes(b'do not open or delete')
+        (self.state/'dataset.sqlite3-wal').symlink_to(original)
+        with patch('collector.reset.readonly',side_effect=AssertionError('redirect must be rejected before SQLite opens')):
+            with self.assertRaises(ValueError):
+                reset_data(self.state,self.finding,'fixture-revision',apply=True,discard_old_data=True)
+        self.assertEqual(original.read_bytes(),b'do not open or delete')
+
+    def test_initialization_failure_cannot_discard_current_or_previous_data(self):
+        previous=self.previous_backup()
+        with patch('collector.reset.Store',side_effect=RuntimeError('initialization failed')):
+            with self.assertRaises(RuntimeError):
+                reset_data(self.state,self.finding,'fixture-revision',apply=True,discard_old_data=True)
+        self.assertEqual(self.store.status()['samples'],5)
+        self.assertTrue((previous/'dataset.sqlite3').exists())
+
+    def test_discard_failure_reports_empty_new_database_and_cli_error_without_rollback(self):
+        from collector.__main__ import main
+        self.qualify();output=io.StringIO()
+        with patch('collector.reset.shutil.rmtree',side_effect=PermissionError('test cleanup error')),redirect_stdout(output):
+            code=main(['--state-dir',str(self.state),'--finding',str(self.finding),
+                       'reset-data','--apply','--discard-old-data'])
+        result=json.loads(output.getvalue())
+        self.assertEqual(code,1)
+        self.assertTrue(result['reset'])
+        self.assertFalse(result['old_data_discarded'])
+        self.assertEqual(result['discard_errors'][0]['type'],'PermissionError')
+        self.assertEqual(self.store.status()['samples'],0)
+        with closing(sqlite3.connect(Path(result['backup'])/'dataset.sqlite3')) as db:
+            self.assertEqual(db.execute('SELECT count(*) FROM samples').fetchone()[0],5)
+
+    def test_partial_inputs_are_retained_alongside_full_inputs(self):
+        self.qualify()
+        with closing(self.store.connect()) as db:
+            full=json.loads(db.execute('SELECT payload FROM samples LIMIT 1').fetchone()[0])
+        partial=copy.deepcopy(full['widget_data'])
+        partial['views'].update(state='partial',missing=[{'reason':'selection_failed'}])
+        partial['coverage'].update(usable_rich_capture=False,reasons=['view_capture_incomplete'])
+        self.assertTrue(self.store.save_sample(full['event'],full['team_statistics'],{},self.at,widget=partial))
+        with closing(self.store.connect()) as db:
+            states=dict(db.execute("SELECT json_extract(payload,'$.widget_data.views.state'),count(*) FROM samples GROUP BY 1"))
+        self.assertEqual(states,{'captured':5,'partial':1})
 
 
 class DetailedMonitorTests(unittest.TestCase):
