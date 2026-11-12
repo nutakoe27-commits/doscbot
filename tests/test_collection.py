@@ -257,6 +257,32 @@ class CollectionTests(unittest.TestCase):
         self.assertEqual(last["state"], "source_error")
         self.assertEqual(json.loads(last["details"])["reason"], "no_new_source_snapshot")
 
+    def test_results_failure_is_separate_from_successful_fresh_inputs(self):
+        from collector.live import cycle
+        state = self.folder / "results-partial"
+        commands = []
+        def fresh_source(command, *args):
+            commands.append(command)
+            with closing(connect(state / "source/winline.sqlite3")) as db:
+                capture = db.execute("INSERT INTO captures(started_at,url) VALUES (?,?)",
+                                     (self.stamp, "https://winline.ru/")).lastrowid
+                db.commit()
+                save_snapshot(db, capture, self.data, self.stamp)
+            return 0
+        with patch("collector.live.run_source", side_effect=fresh_source), \
+             patch("collector.live.collect_details", new_callable=AsyncMock, return_value={"samples": 1, "errors": []}), \
+             patch("collector.results.collect_results", new_callable=AsyncMock,
+                   return_value={"state": "partial", "successful": 1, "failed": 1}) as results:
+            self.assertFalse(cycle(self.store, state, FINDING, None, "football", 1, 2, headed=True))
+            self.assertEqual(results.await_args.kwargs["sport"], "football")
+        self.assertEqual(commands[0][commands[0].index("--history-days") + 1], "0")
+        last = self.store.status()["last_run"]
+        details = json.loads(last["details"])
+        self.assertEqual(last["state"], "partial")
+        self.assertEqual(details["samples"], 1)
+        self.assertEqual(details["source_exit_code"], 0)
+        self.assertEqual(details["results"]["failed"], 1)
+
     def test_recorded_finished_statistics_never_become_prematch_samples(self):
         fixture = json.loads((FINDING / "tests/fixtures/team_statistics_projection.json").read_text())
         event, _ = self.sample_inputs()

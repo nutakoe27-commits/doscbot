@@ -133,7 +133,7 @@ def run_source(command, finding, environment, stopped):
 
 
 def cycle(store, state_dir, finding, chromium, sport, limit, history_days, stopped=lambda: False,
-          *, headed=False):
+          *, headed=False, result_timeout=45, result_limit=4):
     archive = Path(state_dir) / "source" / "winline.sqlite3"
     # Never adopt a pre-existing source archive, including an old finding database.
     with closing(store.connect()) as db, db:
@@ -143,7 +143,7 @@ def cycle(store, state_dir, finding, chromium, sport, limit, history_days, stopp
         db.execute("INSERT OR REPLACE INTO metadata VALUES ('source_archive',?)", (str(archive.resolve()),))
     archive.parent.mkdir(parents=True, exist_ok=True)
     command = [sys.executable, "-m", "winline.collect", "--database", str(archive),
-               "--seconds", "5", "--history-days", str(history_days),
+               "--seconds", "5", "--history-days", "0",
                "--no-expand-markets", "--no-snapshot-files", "--light-snapshots"]
     if chromium:
         command += ["--chromium", chromium]
@@ -171,11 +171,22 @@ def cycle(store, state_dir, finding, chromium, sport, limit, history_days, stopp
             store.finish_run(run, "source_error", details)
             return False
         details = asyncio.run(collect_details(store, archive, chromium, sport, limit, headed=headed))
+        if history_days and not stopped():
+            from .results import collect_results
+            try:
+                details["results"] = asyncio.run(collect_results(
+                    store, archive, sport=sport, days=history_days,
+                    options=browser_options(chromium, headed), timeout_seconds=result_timeout,
+                    limit=result_limit, stopped=stopped))
+            except Exception as error:
+                details["results"] = {"state": "error", "error": type(error).__name__}
+            for kind, count in sync_archive(store, archive).items():
+                counts[kind] = counts.get(kind, 0) + count
         details["details_browser"] = "headed" if headed else "headless"
         details["source_exit_code"] = code
         details["imported_new_observations"] = counts
         state = "ok" if details["samples"] else "partial"
-        if details["errors"] or code:
+        if details["errors"] or code or details.get("results", {}).get("state", "ok") != "ok":
             state = "partial"
         store.finish_run(run, state, details)
         return state == "ok"

@@ -13,6 +13,14 @@ from .source import ROOT, load_finding
 from .store import Store
 
 
+def needs_backoff(status):
+    details = json.loads((status.get("last_run") or {}).get("details", "{}"))
+    results = details.get("results", {})
+    denied = str(results.get("error", "")).startswith("source_http_") or any(
+        str(item.get("error", "")).startswith("source_http_") for item in results.get("requests", []))
+    return details.get("source_exit_code") != 0 or bool(details.get("errors")) or denied
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(description="Collect fresh source facts, without calling an LLM.")
     parser.add_argument("--state-dir", type=Path, default=Path(os.environ.get("DOSCBOT_DATA_DIR", ROOT / ".local")))
@@ -31,6 +39,8 @@ def main(argv=None):
     collect.add_argument("--sport", default="football")
     collect.add_argument("--event-limit", type=int, default=5)
     collect.add_argument("--history-days", type=int, default=2)
+    collect.add_argument("--result-timeout", type=int, default=45, help="Result reply timeout, seconds")
+    collect.add_argument("--result-limit", type=int, default=4, help="Maximum sport/day result jobs per cycle")
     collect.add_argument("--headed", action="store_true",
                          help="Use a normal browser for detailed statistics; requires DISPLAY (e.g. xvfb-run)")
     collect.add_argument("--chromium", default=os.environ.get("CHROMIUM_EXECUTABLE") or
@@ -38,6 +48,8 @@ def main(argv=None):
     args = parser.parse_args(argv)
     if args.command == "collect" and (args.interval < 60 or not 1 <= args.event_limit <= 100 or not 0 <= args.history_days <= 30):
         parser.error("interval >= 60, event-limit 1..100, history-days 0..30 required")
+    if args.command == "collect" and (not 15 <= args.result_timeout <= 90 or not 1 <= args.result_limit <= 20):
+        parser.error("result-timeout 15..90 and result-limit 1..20 required")
     if args.command == "collect" and args.headed and not os.environ.get("DISPLAY"):
         parser.error("--headed requires DISPLAY; use xvfb-run -a")
     finding, revision = load_finding(args.finding)
@@ -78,11 +90,15 @@ def main(argv=None):
         failures = 0
         while running:
             ok = cycle(store, state, finding, args.chromium, args.sport, args.event_limit, args.history_days,
-                       stopped=lambda: not running, headed=args.headed)
-            print(json.dumps(store.status(), ensure_ascii=False), flush=True)
+                       stopped=lambda: not running, headed=args.headed,
+                       result_timeout=args.result_timeout, result_limit=args.result_limit)
+            status = store.status()
+            print(json.dumps(status, ensure_ascii=False), flush=True)
             if args.once:
                 return 0 if ok else 2
-            failures = 0 if ok else failures + 1
+            # Archive jobs have their own retry schedule. A result timeout must
+            # not stretch successful pre-match collection to hourly intervals.
+            failures = failures + 1 if needs_backoff(status) else 0
             delay = max(args.interval, min(3600, 60 * 2 ** min(failures, 6)))
             deadline = time.monotonic() + delay
             while running and time.monotonic() < deadline:
