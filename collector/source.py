@@ -82,7 +82,7 @@ def sync_archive(store, path):
     return counts
 
 
-def candidates(path, sport, limit, cutoff, last_attempts=None):
+def candidates(path, sport, limit, cutoff, last_attempts=None, event_id=None):
     """Only source-observed upcoming matches; no guessed statistics IDs."""
     from matchlab.archive import sport_key
     from matchlab.sports import match_url
@@ -96,6 +96,8 @@ def candidates(path, sport, limit, cutoff, last_attempts=None):
                               "snapshot_id=(SELECT max(id) FROM snapshots) "
                               "ORDER BY julianday(start_at),id"):
             value = event(row, *dictionaries)
+            if event_id is not None and str(value["event_id"]) != str(event_id):
+                continue
             key = sport_key(value["sport_label"], value["sport_id"])
             if sport != "all" and key != sport:
                 continue

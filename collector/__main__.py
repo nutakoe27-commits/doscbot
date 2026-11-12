@@ -38,6 +38,7 @@ def main(argv=None):
     collect.add_argument("--interval", type=int, default=300, help="Delay after each completed cycle")
     collect.add_argument("--sport", default="football")
     collect.add_argument("--event-limit", type=int, default=5)
+    collect.add_argument("--event-id", help="Only this observed upcoming event; never substitute another")
     collect.add_argument("--history-days", type=int, default=2)
     collect.add_argument("--result-timeout", type=int, default=45, help="Result reply timeout, seconds")
     collect.add_argument("--result-limit", type=int, default=4, help="Maximum sport/day result jobs per cycle")
@@ -52,6 +53,8 @@ def main(argv=None):
         parser.error("result-timeout 15..90 and result-limit 1..20 required")
     if args.command == "collect" and args.headed and not os.environ.get("DISPLAY"):
         parser.error("--headed requires DISPLAY; use xvfb-run -a")
+    if args.command == "collect" and args.event_id and (not args.event_id.isdecimal() or len(args.event_id) > 20):
+        parser.error("A numeric event-id is required")
     finding, revision = load_finding(args.finding)
     state = args.state_dir.expanduser().resolve()
     # Source code can be read; no data, configuration, or outputs may go into finding.
@@ -91,7 +94,7 @@ def main(argv=None):
         while running:
             ok = cycle(store, state, finding, args.chromium, args.sport, args.event_limit, args.history_days,
                        stopped=lambda: not running, headed=args.headed,
-                       result_timeout=args.result_timeout, result_limit=args.result_limit)
+                       result_timeout=args.result_timeout, result_limit=args.result_limit, event_id=args.event_id)
             status = store.status()
             print(json.dumps(status, ensure_ascii=False), flush=True)
             if args.once:

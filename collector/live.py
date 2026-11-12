@@ -24,21 +24,25 @@ def browser_options(chromium, headed=False):
     return options
 
 
-async def collect_details(store, archive, chromium, sport, limit, *, headed=False):
+async def collect_details(store, archive, chromium, sport, limit, *, headed=False, event_id=None):
     from playwright.async_api import async_playwright
     from matchlab.statistics import collect_statistics, validate_statistics
     from matchlab.winline_markets import (ensure_event_page, read_marketbook,
                                         discover_statistics_link, market_document)
     from matchlab.worker_protocol import market_feed
     from winline.team_context import build_context
+    from .widget_capture import WidgetCapture
 
     with closing(store.connect()) as db:
         attempts = {r["entity_id"]: r["at"] for r in db.execute(
             "SELECT entity_id,max(observed_at) at FROM observations WHERE kind='event_attempt' GROUP BY entity_id")}
-    events = candidates(archive, sport, limit, now(), attempts)
+    events = candidates(archive, sport, limit, now(), attempts, event_id=event_id)
     result = {"selected": len(events), "market_documents": 0, "statistics": 0,
-              "samples": 0, "errors": [], "statistics_states": {}, "sample_outcomes": {}}
+              "samples": 0, "errors": [], "statistics_states": {}, "sample_outcomes": {},
+              "widget_json": 0, "widget_capture_states": {}}
     if not events:
+        if event_id is not None:
+            result["errors"].append({"event_id": event_id, "type": "requested_event_not_in_fresh_prematch_catalog"})
         return result
     async with async_playwright() as playwright:
         browser = await playwright.chromium.launch(**browser_options(chromium, headed))
@@ -79,7 +83,16 @@ async def collect_details(store, archive, chromium, sport, limit, *, headed=Fals
                         result["statistics_states"][event["source_event_id"]] = "missing_link"
                         continue
                     job = {**document, "url": document["url"]}
-                    statistics = await collect_statistics(page, job, enable_feed=True)
+                    observer = WidgetCapture(page, document["statistics_url"].rstrip("/").rsplit("/", 1)[-1])
+                    observer.start()
+                    try:
+                        statistics = await collect_statistics(page, job, enable_feed=True)
+                    finally:
+                        records, summary = await observer.finish()
+                        result["widget_capture_states"][event["source_event_id"]] = summary
+                        for record in records:
+                            store.observation("widget_json", event["source_event_id"], record["observed_at"], record)
+                        result["widget_json"] += len(records)
                     statistics = validate_statistics(statistics, document)
                     store.observation("team_statistics", event["source_event_id"], statistics["attempted_at"], statistics)
                     result["statistics_states"][event["source_event_id"]] = statistics["state"]
@@ -133,7 +146,7 @@ def run_source(command, finding, environment, stopped):
 
 
 def cycle(store, state_dir, finding, chromium, sport, limit, history_days, stopped=lambda: False,
-          *, headed=False, result_timeout=45, result_limit=4):
+          *, headed=False, result_timeout=45, result_limit=4, event_id=None):
     archive = Path(state_dir) / "source" / "winline.sqlite3"
     # Never adopt a pre-existing source archive, including an old finding database.
     with closing(store.connect()) as db, db:
@@ -170,7 +183,7 @@ def cycle(store, state_dir, finding, chromium, sport, limit, history_days, stopp
                        "reason": "no_new_source_snapshot"}
             store.finish_run(run, "source_error", details)
             return False
-        details = asyncio.run(collect_details(store, archive, chromium, sport, limit, headed=headed))
+        details = asyncio.run(collect_details(store, archive, chromium, sport, limit, headed=headed, event_id=event_id))
         if history_days and not stopped():
             from .results import collect_results
             try:

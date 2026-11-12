@@ -219,6 +219,13 @@ class CollectionTests(unittest.TestCase):
         picked = candidates(self.source, "football", 1, self.stamp, {"100": self.stamp})
         self.assertEqual(picked[0]["source_event_id"], "101")
 
+    def test_explicit_event_is_never_replaced_by_another_candidate(self):
+        self.data["events"].append({**self.data["events"][0], "id": 101})
+        save_snapshot(self.db, self.capture, self.data, self.stamp)
+        picked = candidates(self.source, "football", 5, self.stamp, event_id="101")
+        self.assertEqual([e["source_event_id"] for e in picked], ["101"])
+        self.assertEqual(candidates(self.source, "football", 5, self.stamp, event_id="999"), [])
+
     def test_partial_source_failure_still_collects_fresh_details(self):
         from collector.live import cycle
         state = self.folder / "partial"
