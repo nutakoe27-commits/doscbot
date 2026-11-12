@@ -93,6 +93,8 @@ CREATE TABLE IF NOT EXISTS observations (
  sha256 TEXT NOT NULL, payload TEXT NOT NULL,
  UNIQUE(kind,entity_id,observed_at,sha256));
 CREATE INDEX IF NOT EXISTS observations_entity ON observations(kind,entity_id,observed_at);
+CREATE INDEX IF NOT EXISTS observations_kind_id ON observations(kind,id);
+CREATE INDEX IF NOT EXISTS observations_outcome_key ON observations(json_extract(payload,'$.result_key')) WHERE kind='event_outcome';
 CREATE TABLE IF NOT EXISTS cursors (
  table_name TEXT PRIMARY KEY, row_id INTEGER NOT NULL, sha256 TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS samples (

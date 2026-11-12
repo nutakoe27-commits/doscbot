@@ -133,6 +133,33 @@ class ResultTests(unittest.TestCase):
         self.assertEqual(report["state"], "partial")
         self.assertEqual(self.requests, [])
 
+    def test_unresolved_followed_match_requests_an_older_available_day(self):
+        day = (self.day//86400000-4)*86400000
+        kickoff = datetime.fromtimestamp(day/1000,timezone.utc)+timedelta(hours=12)
+        self.catalog["sports"]["1"]["dates"].append(day)
+        self.store.observation("market_document","older",self.at.isoformat(),
+            {"sport":"football","kickoff_at":kickoff.isoformat()})
+        report = self.run_collection()
+        self.assertEqual(report["followup_pairs"],1)
+        self.assertIn((1,day),self.requests)
+        self.store.observation("event_outcome","older",self.at.isoformat(),{"score_text":"1:0"})
+        self.requests.clear()
+        report = self.run_collection()
+        self.assertEqual(report["followup_pairs"],0)
+        self.assertNotIn((1,day),self.requests)
+
+    def test_followup_does_not_invent_unavailable_days_or_other_sports(self):
+        day = (self.day//86400000-4)*86400000
+        kickoff = datetime.fromtimestamp(day/1000,timezone.utc)+timedelta(hours=12)
+        self.store.observation("market_document","not-offered",self.at.isoformat(),
+            {"sport":"football","kickoff_at":kickoff.isoformat()})
+        self.catalog["sports"]["2"]["dates"].append(day)
+        self.store.observation("market_document","other-sport",self.at.isoformat(),
+            {"sport":"hockey","kickoff_at":kickoff.isoformat()})
+        report = self.run_collection()
+        self.assertEqual(report["followup_pairs"],0)
+        self.assertTrue(all(pair[0]==1 for pair in self.requests))
+
     def test_preexisting_unowned_database_is_not_opened(self):
         other = Path(self.temp.name) / "unowned.sqlite3"
         other.write_bytes(b"do not modify")

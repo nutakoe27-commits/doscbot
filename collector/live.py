@@ -11,6 +11,7 @@ import time
 
 from .source import candidates, source_connection, sync_archive
 from .store import instant, now, sample_blocker
+from .runtime import update_runtime
 
 
 def browser_options(chromium, headed=False):
@@ -39,6 +40,7 @@ async def collect_details(store, archive, chromium, sport, limit, *, headed=Fals
         attempts = {r["entity_id"]: r["at"] for r in db.execute(
             "SELECT entity_id,max(observed_at) at FROM observations WHERE kind='event_attempt' GROUP BY entity_id")}
     events = candidates(archive, sport, limit, now(), attempts, event_id=event_id)
+    update_runtime(store, phase="details", completed=0, total=len(events), current_match=None)
     result = {"selected": len(events), "market_documents": 0, "statistics": 0,
               "samples": 0, "errors": [], "statistics_states": {}, "sample_outcomes": {},
               "widget_json": 0, "widget_capture_states": {}, "widget_data": 0,
@@ -57,7 +59,9 @@ async def collect_details(store, archive, chromium, sport, limit, *, headed=Fals
                 else:
                     await route.continue_()
             await context.route("**/*", resources)
-            for event in events:
+            for index, event in enumerate(events):
+                update_runtime(store, phase="markets", completed=index, total=len(events),
+                               current_event=event["source_event_id"], current_match=f"{event['home']} — {event['away']}")
                 store.observation("event_attempt", event["source_event_id"], now(), {"url": event["url"]})
                 page = await context.new_page()
                 sockets = []
@@ -87,11 +91,13 @@ async def collect_details(store, archive, chromium, sport, limit, *, headed=Fals
                         continue
                     job = {**document, "url": document["url"]}
                     observer = WidgetCapture(page, document["statistics_url"].rstrip("/").rsplit("/", 1)[-1])
+                    update_runtime(store, phase="statistics")
                     observer.start()
                     views = None
                     try:
                         statistics = await collect_statistics(page, job, enable_feed=True)
                         if statistics.get("state") == "ok":
+                            update_runtime(store, phase="filters")
                             views = await collect_widget_views(page, observer.statistics_id)
                     finally:
                         records, summary = await observer.finish()
@@ -140,6 +146,7 @@ async def collect_details(store, archive, chromium, sport, limit, *, headed=Fals
                     result["errors"].append({"event_id": event["source_event_id"], "type": type(error).__name__})
                 finally:
                     await page.close()
+                    update_runtime(store, completed=index+1)
                 await asyncio.sleep(1)
         finally:
             await browser.close()
@@ -186,12 +193,15 @@ def cycle(store, state_dir, finding, chromium, sport, limit, history_days, stopp
     environment = dict(os.environ)
     environment["PYTHONPATH"] = str(finding)
     run = store.begin_run()
+    update_runtime(store, phase="catalog", run_id=run, current_match=None, current_event=None,
+                   completed=0, total=0, next_run_at=None)
     try:
         before = 0
         if archive.exists():
             with closing(source_connection(archive)) as db:
                 before = db.execute("SELECT coalesce(max(id),0) FROM snapshots").fetchone()[0]
         code = run_source(command, finding, environment, stopped)
+        update_runtime(store, phase="import")
         counts = sync_archive(store, archive) if archive.exists() else {}
         if stopped():
             store.finish_run(run, "stopped", {"imported_new_observations": counts})
@@ -208,6 +218,7 @@ def cycle(store, state_dir, finding, chromium, sport, limit, history_days, stopp
         details = asyncio.run(collect_details(store, archive, chromium, sport, limit, headed=headed, event_id=event_id))
         if history_days and not stopped():
             from .results import collect_results
+            update_runtime(store, phase="results", current_match=None, completed=0, total=0)
             try:
                 details["results"] = asyncio.run(collect_results(
                     store, archive, sport=sport, days=history_days,
@@ -217,11 +228,19 @@ def cycle(store, state_dir, finding, chromium, sport, limit, history_days, stopp
                 details["results"] = {"state": "error", "error": type(error).__name__}
             for kind, count in sync_archive(store, archive).items():
                 counts[kind] = counts.get(kind, 0) + count
+        if not stopped():
+            from .outcomes import sync_outcomes
+            update_runtime(store, phase="link_results", current_match=None)
+            try:
+                details["outcomes"] = sync_outcomes(store, archive)
+            except Exception as error:
+                details["outcomes"] = {"state": "error", "error": type(error).__name__}
         details["details_browser"] = "headed" if headed else "headless"
         details["source_exit_code"] = code
         details["imported_new_observations"] = counts
         state = "ok" if details["samples"] else "partial"
-        if details["errors"] or code or details.get("results", {}).get("state", "ok") != "ok":
+        if (details["errors"] or code or details.get("results", {}).get("state", "ok") != "ok"
+                or details.get("outcomes", {}).get("state") == "error"):
             state = "partial"
         store.finish_run(run, state, details)
         return state == "ok"

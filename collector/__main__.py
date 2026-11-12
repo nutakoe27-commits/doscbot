@@ -8,6 +8,7 @@ import signal
 import shutil
 import sys
 import time
+from datetime import timedelta
 
 from .source import ROOT, load_finding
 from .store import Store
@@ -27,6 +28,12 @@ def main(argv=None):
     parser.add_argument("--finding", type=Path, default=Path(os.environ.get("FINDING_SOURCE_DIR", ROOT.parent / "finding")))
     commands = parser.add_subparsers(dest="command", required=True)
     commands.add_parser("status")
+    monitor = commands.add_parser("monitor", help="Read-only live terminal dashboard; runs alongside the collector")
+    monitor.add_argument("--once", action="store_true", help="Print one snapshot without interactive screen")
+    monitor.add_argument("--refresh", type=float, default=2, help="Refresh interval, seconds (0.5..60)")
+    monitor.add_argument("--timezone", default="Europe/Moscow")
+    monitor.add_argument("--no-color", action="store_true")
+    monitor.add_argument("--view", choices=["overview", "matches", "results", "coverage", "errors"], default="overview")
     inspect = commands.add_parser("inspect-widget", help="Inspect a browser JSON probe without opening a database or network")
     inspect.add_argument("--input", required=True, type=Path)
     inspect.add_argument("--output", required=True, type=Path)
@@ -50,6 +57,16 @@ def main(argv=None):
     collect.add_argument("--chromium", default=os.environ.get("CHROMIUM_EXECUTABLE") or
                         shutil.which("chromium") or shutil.which("chromium-browser"))
     args = parser.parse_args(argv)
+    if args.command == "monitor":
+        if not .5 <= args.refresh <= 60:
+            parser.error("refresh must be 0.5..60 seconds")
+        state = args.state_dir.expanduser().resolve()
+        finding_root = args.finding.expanduser().resolve()
+        if state == finding_root or finding_root in state.parents:
+            parser.error("Monitor only the new collector's state directory outside finding")
+        from .monitor import run_monitor
+        return run_monitor(state, once=args.once, refresh=args.refresh, zone=args.timezone,
+                           no_color=args.no_color, view=args.view)
     if args.command == "inspect-widget":
         from .widget_data import inspect_probe
         output = args.output.expanduser().resolve()
@@ -107,22 +124,27 @@ def main(argv=None):
             running = False
         signal.signal(signal.SIGTERM, stop)
         signal.signal(signal.SIGINT, stop)
-        failures = 0
-        while running:
-            ok = cycle(store, state, finding, args.chromium, args.sport, args.event_limit, args.history_days,
-                       stopped=lambda: not running, headed=args.headed,
-                       result_timeout=args.result_timeout, result_limit=args.result_limit, event_id=args.event_id)
-            status = store.status()
-            print(json.dumps(status, ensure_ascii=False), flush=True)
-            if args.once:
-                return 0 if ok else 2
-            # Archive jobs have their own retry schedule. A result timeout must
-            # not stretch successful pre-match collection to hourly intervals.
-            failures = failures + 1 if needs_backoff(status) else 0
-            delay = max(args.interval, min(3600, 60 * 2 ** min(failures, 6)))
-            deadline = time.monotonic() + delay
-            while running and time.monotonic() < deadline:
-                time.sleep(min(1, deadline - time.monotonic()))
+        from .runtime import Runtime, update_runtime
+        from .store import instant, now
+        with Runtime(store, interval=args.interval, sport=args.sport, event_limit=args.event_limit,
+                     history_days=args.history_days):
+            failures = 0
+            while running:
+                ok = cycle(store, state, finding, args.chromium, args.sport, args.event_limit, args.history_days,
+                           stopped=lambda: not running, headed=args.headed,
+                           result_timeout=args.result_timeout, result_limit=args.result_limit, event_id=args.event_id)
+                status = store.status()
+                print(json.dumps(status, ensure_ascii=False), flush=True)
+                if args.once:
+                    return 0 if ok else 2
+                # Result retries don't stretch healthy primary sampling to hourly intervals.
+                failures = failures + 1 if needs_backoff(status) else 0
+                delay = max(args.interval, min(3600, 60 * 2 ** min(failures, 6)))
+                deadline = time.monotonic() + delay
+                update_runtime(store, phase="waiting", current_match=None, completed=0, total=0,
+                               next_run_at=(instant(now())+timedelta(seconds=delay)).isoformat())
+                while running and time.monotonic() < deadline:
+                    time.sleep(min(1, deadline - time.monotonic()))
     return 0
 
 

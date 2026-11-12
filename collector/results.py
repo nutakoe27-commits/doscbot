@@ -9,6 +9,7 @@ import time
 from playwright.async_api import Error, async_playwright
 
 from .store import encoded, instant, now
+from .runtime import update_runtime
 
 URL = "https://winline.ru/"
 SCHEMA = """
@@ -38,6 +39,37 @@ def pairs_from_catalog(catalog, sport, days):
             if day >= dates[0] - (days - 1) * 86400000:
                 pairs.append((sport_id, day, name))
     return pairs
+
+
+def followed_pairs(store, catalog_value, sport, pairs):
+    """Retry days of unresolved detailed matches, if still offered by source."""
+    from matchlab.archive import sport_key
+    available = {}
+    for identifier, item in catalog_value["sports"].items():
+        key = sport_key(item.get("name", ""), int(identifier))
+        if sport == "all" or key == sport:
+            for day in item.get("dates", []):
+                available[(key, int(day))] = (int(identifier), int(day), item.get("name", key))
+    current = instant(now())
+    wanted = set()
+    with closing(store.connect()) as db:
+        rows = db.execute("SELECT json_extract(o.payload,'$.sport') sport, "
+            "json_extract(o.payload,'$.kickoff_at') kickoff FROM observations o "
+            "WHERE o.kind='market_document' AND o.id IN "
+            "(SELECT max(id) FROM observations WHERE kind='market_document' GROUP BY entity_id) "
+            "AND NOT EXISTS (SELECT 1 FROM observations r WHERE r.kind='event_outcome' AND r.entity_id=o.entity_id)")
+        for row in rows:
+            try:
+                at = instant(row["kickoff"])
+                if current-timedelta(days=7) <= at <= current:
+                    day = int(at.timestamp()) // 86400 * 86400000
+                    candidate = available.get((row["sport"], day))
+                    if candidate:
+                        wanted.add(candidate)
+            except (ValueError, TypeError):
+                continue
+    existing = {(p[0], p[1]) for p in pairs}
+    return pairs + sorted((p for p in wanted if (p[0], p[1]) not in existing), key=lambda p: -p[1])
 
 
 def plan_jobs(db, pairs, limit):
@@ -150,7 +182,9 @@ async def collect_results(store, archive, *, sport, days, options, timeout_secon
                 browser = await playwright.chromium.launch(**options)
                 try:
                     value = await asyncio.wait_for(catalog(browser), timeout=max(1, deadline - time.monotonic()))
-                    pairs = pairs_from_catalog(value, sport, days)
+                    initial_pairs = pairs_from_catalog(value, sport, days)
+                    pairs = followed_pairs(store, value, sport, initial_pairs)
+                    report["followup_pairs"] = len(pairs)-len(initial_pairs)
                     report["available_pairs"] = len(pairs)
                     jobs, due = plan_jobs(db, pairs, limit)
                     report.update(due_pairs=due, planned=len(jobs))
@@ -164,6 +198,8 @@ async def collect_results(store, archive, *, sport, days, options, timeout_secon
                         if stopped() or time.monotonic() >= deadline:
                             break
                         item = {"sport_id": pair[0], "source_day_ms": pair[1]}
+                        update_runtime(store, phase="results", completed=report["attempted"], total=len(jobs),
+                                       current_match=None, result_sport=pair[0], result_day_ms=pair[1])
                         report["attempted"] += 1
                         denied = False
                         try:
@@ -184,6 +220,7 @@ async def collect_results(store, archive, *, sport, days, options, timeout_secon
                             item.update(state="error", error=kind)
                             report["failed"] += 1
                         report["requests"].append(item)
+                        update_runtime(store, completed=report["attempted"])
                         if denied:
                             break
                         await asyncio.sleep(0.5)
