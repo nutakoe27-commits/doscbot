@@ -106,8 +106,15 @@ class BrowserProbeTests(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(report["statistics_id"], "75512542")
                 await page.evaluate("doscbotProbe.stop()")
                 self.assertTrue(await page.evaluate("window.fetch===window.originalFetchForTest"))
-                await page.goto("https://statshub.yunai.tech/winline/ru/match/999")
-                with self.assertRaisesRegex(Exception, "75512542"):
+                await page.goto("https://statshub.yunai.tech/winline/ru/match/68932518")
+                await page.evaluate(source)
+                other = await page.evaluate("doscbotProbe.report()")
+                self.assertEqual(other["statistics_id"], "68932518")
+                self.assertIsNone(other["event_id"])
+                self.assertIsNone(other["event_url"])
+                self.assertEqual(other["binding"], "statistics_page_only")
+                await page.goto("https://winline.ru/stats/match/68932518")
+                with self.assertRaisesRegex(Exception, "iframe StatsHub"):
                     await page.evaluate(source)
             finally:
                 await browser.close()

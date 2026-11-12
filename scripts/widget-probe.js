@@ -1,17 +1,20 @@
 /* Paste into the StatsHub FRAME console, not Winline's top frame.
  * Observes existing requests only; never sends data to another service.
- * Target supplied by the user: Winline 17139995 -> statistics 75512542.
+ * The statistics ID is read from the selected provider frame.
  */
 (() => {
   "use strict";
-  const TARGET = "75512542";
   const PROVIDERS = new Set(["statshub.yunai.tech", "statshub.sportradar.com"]);
   const DATA_HOSTS = new Set([...PROVIDERS, "sh.fn.yunai.tech"]);
   const match = location.pathname.match(/^\/winline\/(?:ru|en)\/match\/(\d+)(?:\/(?:report|statistics))?\/?$/);
-  if (!PROVIDERS.has(location.hostname) || !match || match[1] !== TARGET) {
-    throw new Error("Выбери в Console контекст iframe StatsHub для матча 75512542. В top этот код не запускается.");
+  if (!PROVIDERS.has(location.hostname) || !match) {
+    throw new Error("Выбери в Console контекст iframe StatsHub открытого матча. В top этот код не запускается.");
   }
+  const TARGET = match[1];
   if (window.doscbotProbe) {
+    if (window.doscbotProbe.status().statistics_id !== TARGET) {
+      throw new Error("В окне осталась запись другого матча. Сохрани её через doscbotProbe.download(), затем перезагрузи страницу и вставь скрипт заново.");
+    }
     console.info("Диагностика уже установлена", window.doscbotProbe.status());
     return;
   }
@@ -19,10 +22,10 @@
   const state = {
     format: "doscbot.browser-widget-probe.v1",
     capture_id: crypto.randomUUID(),
-    event_id: "17139995", statistics_id: TARGET,
-    event_url: "https://winline.ru/stavki/sport/futbol/mezhdunarodnye/liga_naczij_konkakaf/17139995",
+    event_id: TARGET === "75512542" ? "17139995" : null, statistics_id: TARGET,
+    event_url: TARGET === "75512542" ? "https://winline.ru/stavki/sport/futbol/mezhdunarodnye/liga_naczij_konkakaf/17139995" : null,
     statistics_url: "https://winline.ru/stats/match/" + TARGET,
-    binding: "user_provided_pair", started_at: new Date().toISOString(),
+    binding: TARGET === "75512542" ? "user_provided_pair" : "statistics_page_only", started_at: new Date().toISOString(),
     initial_requests_observed: false, requests: [], snapshots: [], initial_data: {},
     limits: {response_bytes: 2 * 1024 * 1024, total_bytes: 12 * 1024 * 1024, requests: 100, snapshots: 30},
     skipped: {}, redacted: 0, truncated: false
