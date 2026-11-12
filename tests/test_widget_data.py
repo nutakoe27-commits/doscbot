@@ -194,6 +194,54 @@ class WidgetViewsTests(unittest.IsolatedAsyncioTestCase):
         self.assertIsNone(reason)
         self.assertEqual(snapshot['selected'], ['За матч', 'Хозяева / Гости'])
 
+    async def test_pointer_tabs_capture_all_24_scoring_and_conceding_states(self):
+        groups = [["Забитые голы", "Пропущено"], ["Всего", "Хозяева", "Гости"], ["3", "6", "12", "Сезон"]]
+        body = '<div style="height:1800px">Матч</div><div data-testid="card__scoringConceding">'
+        for index, group in enumerate(groups):
+            attribute = 'aria-selected' if index==0 else 'aria-pressed'
+            body += '<div>' + ''.join(f'<button {attribute}="{str(i==0).lower()}">{label}</button>'
+                                      for i,label in enumerate(group)) + '</div>'
+        body += '''<div><span>3</span><span>Показатель</span><span>1</span></div></div><script>
+            window.pointerSwitches=0;
+            for(const b of document.querySelectorAll('button')) {
+                const attribute=b.hasAttribute('aria-selected')?'aria-selected':'aria-pressed';
+                const select=()=>{
+                    for(const s of b.parentElement.children) s.setAttribute(attribute,String(s===b));
+                };
+                if(attribute==='aria-selected') b.onmousedown=event=>{
+                    if(event.isTrusted && event.button===0) { window.pointerSwitches++; select(); }
+                };
+                else b.onclick=select;
+            }
+        </script>'''
+        async def fixture(route):
+            await route.fulfill(content_type='text/html; charset=utf-8',body=body)
+        await self.page.route('**/*',fixture)
+        await self.page.goto('https://statshub.yunai.tech/winline/ru/match/68932518/statistics')
+        snapshot,reason=await selected_snapshot(self.page,'card__scoringConceding',groups,
+            ['Пропущено','Всего','3'],time.monotonic()+3)
+        self.assertIsNone(reason)
+        self.assertEqual(snapshot['selected'][0],'Пропущено')
+        result=await collect_widget_views(self.page,'68932518',budget_seconds=35)
+        self.assertEqual(result['missing'],[])
+        self.assertEqual(result['state'],'captured')
+        self.assertEqual(result['groups']['statistics:card__scoringConceding'],{'captured':24,'expected':24})
+        self.assertEqual(sum(s['selected'][0]=='Пропущено' for s in result['snapshots']),12)
+        self.assertGreater(await self.page.evaluate('window.pointerSwitches'),0)
+        self.assertGreater(await self.page.evaluate('window.scrollY'),0)
+
+    async def test_pointer_click_does_not_force_through_a_covering_element(self):
+        await self.page.set_content('''<div data-testid="card__scoringConceding">
+            <div><button aria-selected="true">Забитые голы</button><button aria-selected="false">Пропущено</button></div>
+            </div><div style="position:fixed;inset:0;background:white;z-index:5">Подождите</div>''')
+        diagnostic={}
+        snapshot,reason=await selected_snapshot(self.page,'card__scoringConceding',
+            [['Забитые голы','Пропущено']],['Пропущено'],time.monotonic()+3,diagnostics=diagnostic)
+        self.assertIsNone(snapshot)
+        self.assertEqual(reason,'filter_click_failed')
+        self.assertEqual(diagnostic['click_method'],'playwright_pointer')
+        self.assertEqual(diagnostic['selected'],['Забитые голы'])
+
     async def test_real_form_card_percentages_and_scope_are_preserved(self):
         value = json.loads(FIXTURE.read_text())
         await self.page.set_content(value["form_html"])

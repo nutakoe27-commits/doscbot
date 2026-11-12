@@ -44,7 +44,8 @@ CARD_SCRIPT = r'''({cardId, groups=[], labels=[], action='read'}) => {
         const candidates=sourceGroups.filter(g=>g.buttons.length===wanted.length && g.buttons.every((b,j)=>label(b)===wanted[j]));
         const occurrence=groups.slice(0,i).filter(g=>JSON.stringify(g)===JSON.stringify(groups[i])).length;
         const expectedCount=groups.filter(g=>JSON.stringify(g)===JSON.stringify(groups[i])).length;
-        if(candidates.length!==expectedCount) return {ok:false,reason:'filter_absent_or_ambiguous'};
+        if(candidates.length!==expectedCount) return {ok:false,reason:'filter_absent_or_ambiguous',group_index:i,
+            observed_groups:sourceGroups.slice(0,20).map(g=>g.buttons.slice(0,20).map(label))};
         const group=candidates[occurrence].buttons;
         if(group.some(b=>!['true','false'].includes(active(b))) ||
            group.filter(b=>active(b)==='true').length!==1)
@@ -52,9 +53,10 @@ CARD_SCRIPT = r'''({cardId, groups=[], labels=[], action='read'}) => {
         selected.push(label(group.find(b=>active(b)==='true')));
         if(labels.length) {
             const target=group.find(b=>label(b)===labels[i]);
-            if(!target || target.disabled) return {ok:false,reason:'filter_disabled'};
-            if(action==='click' && active(target)!=='true') {
-                target.click(); return {ok:true,clicked:true,group_index:i,target:labels[i]};
+            if(!target || target.disabled && active(target)!=='true') return {ok:false,reason:'filter_disabled'};
+            if(active(target)!=='true') {
+                if(action==='target') return target;
+                if(action==='plan') return {ok:true,needs_click:true,group_index:i,target:labels[i]};
             }
         }
     }
@@ -133,7 +135,7 @@ def matches_frame(frame, identifier):
                                             for suffix in ("", "/report", "/statistics")])
 
 
-async def selected_snapshot(frame, card_id, groups, labels, deadline, network=None):
+async def selected_snapshot(frame, card_id, groups, labels, deadline, network=None, diagnostics=None):
     args = {"cardId": card_id, "groups": groups, "labels": list(labels), "action": "check"}
     transient = {"card_absent", "filter_absent_or_ambiguous", "filter_state_unconfirmed", "filter_disabled"}
     pending = None
@@ -142,6 +144,9 @@ async def selected_snapshot(frame, card_id, groups, labels, deadline, network=No
         # Cards attach before their controls hydrate. Re-resolve the source
         # groups while waiting, including after React replaces a card.
         state = await frame.evaluate(CARD_SCRIPT, args)
+        if diagnostics is not None:
+            diagnostics.update({key:state[key] for key in ('selected','group_index','observed_groups') if key in state})
+            diagnostics['pending_requests'] = len(network['pending']) if network else 0
         if not state.get("ok"):
             reason = state.get("reason", "unavailable")
             if reason not in transient:
@@ -162,12 +167,29 @@ async def selected_snapshot(frame, card_id, groups, labels, deadline, network=No
             if selected == list(labels) and not state.get("loading") and settled:
                 break
             if not state.get("loading") and settled:
-                clicked = await frame.evaluate(CARD_SCRIPT, {**args, "action": "click"})
-                if clicked.get("clicked"):
-                    pending = (clicked["group_index"], clicked["target"])
+                planned = await frame.evaluate(CARD_SCRIPT, {**args, "action": "plan"})
+                if planned.get("needs_click"):
+                    if diagnostics is not None:
+                        diagnostics.update(click_method='playwright_pointer', group_index=planned['group_index'], waiting_for=planned['target'])
+                    # HTMLElement.click() skips pointer/mousedown/focus. Some
+                    # source tabs switch on those events rather than click.
+                    # Resolve the exact scoped source button, then let the
+                    # browser scroll and perform an actionable pointer click.
+                    handle = await frame.evaluate_handle(CARD_SCRIPT, {**args, "action": "target"})
+                    try:
+                        button = handle.as_element()
+                        if button is None:
+                            await asyncio.sleep(.1)
+                            continue
+                        await button.click(timeout=max(1, int((deadline-time.monotonic())*1000)))
+                    except Exception:
+                        return None, 'filter_click_failed'
+                    finally:
+                        await handle.dispose()
+                    pending = (planned["group_index"], planned["target"])
                     reason = "selection_failed"
-                elif not clicked.get("ok"):
-                    reason = clicked.get("reason", "unavailable")
+                elif not planned.get("ok"):
+                    reason = planned.get("reason", "unavailable")
                     if reason not in transient:
                         return None, reason
         await asyncio.sleep(.1)
@@ -205,6 +227,7 @@ async def collect_widget_views(page, statistics_id, *, budget_seconds=120, stopp
     result = {"format":"doscbot.widget-views.v2", "statistics_id":identifier, "started_at":now(),
               "state":"partial", "snapshots":[], "missing":[], "groups":{}, "observed_views":[],
               "inventory":{}, "header":None, "provider_url":None, "truncated":False}
+    result['interaction']='playwright_pointer'
     result['bytes']=0
     deadline = time.monotonic()+budget_seconds
     frames = [f for f in page.frames if matches_frame(f,identifier)]
@@ -344,13 +367,15 @@ async def collect_widget_views(page, statistics_id, *, budget_seconds=120, stopp
                         continue
                     if not alive():
                         break
-                    snapshot,reason=await selected_snapshot(frame,card_id,groups,labels,min(deadline,time.monotonic()+6),network)
+                    diagnostic={}
+                    snapshot,reason=await selected_snapshot(frame,card_id,groups,labels,min(deadline,time.monotonic()+6),network,diagnostic)
                     if not matches_frame(frame,identifier):
                         snapshot,reason=None,'provider_identity_changed'
                     if snapshot:
                         save(snapshot,view)
                     else:
-                        result["missing"].append({"view":view,"card_id":card_id,"labels":list(labels),"reason":reason})
+                        result["missing"].append({"view":view,"card_id":card_id,"labels":list(labels),"reason":reason,
+                                                  "selection":diagnostic})
             except Exception:
                 result["missing"].append({"view":view,"card_id":card_id,"reason":"card_unavailable"})
     finally:
@@ -359,8 +384,10 @@ async def collect_widget_views(page, statistics_id, *, budget_seconds=120, stopp
     incomplete=[{"card":key,**value} for key,value in result["groups"].items() if value["captured"]<value["expected"]]
     if incomplete:
         result["missing"].append({"reason":"stopped" if stopped() else "incomplete_filter_states","groups":incomplete})
-    if not alive() and not result["missing"]:
-        result["missing"].append({"reason":"stopped" if stopped() else "time_budget"})
+    if not alive():
+        reason="stopped" if stopped() else "time_budget"
+        if not any(item.get('reason')==reason for item in result['missing']):
+            result["missing"].append({"reason":reason})
     if result["snapshots"] and not result["missing"] and not result["truncated"]:
         result["state"]="captured"
     result["finished_at"]=now()

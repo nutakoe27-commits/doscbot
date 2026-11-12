@@ -117,7 +117,10 @@ def audit(state, sports=DEFAULT_SPORTS, *, hours=24):
                             'documents':value.get('coverage',{}).get('documents',0)}
             views=value.get('views') or {}
             item['latest']['view_state']=views.get('state')
+            item['latest']['interaction']=views.get('interaction')
             item['latest']['view_failures']=dict(Counter(m.get('reason','unknown') for m in views.get('missing',[])))
+            item['latest']['view_failure_examples']=[{key:missing[key] for key in ('view','card_id','labels','reason','selection') if key in missing}
+                                                    for missing in views.get('missing',[]) if missing.get('card_id')][:3]
             item['latest']['incomplete_filter_groups']=[{'card':card,**group} for card,group in views.get('groups',{}).items()
                                                        if group.get('captured',0)<group.get('expected',0)]
         for row in db.execute("SELECT json_extract(payload,'$.event.sport') sport,count(*) n FROM samples "
