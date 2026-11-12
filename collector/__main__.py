@@ -36,6 +36,12 @@ def main(argv=None):
     reset.add_argument('--discard-old-data',action='store_true',
                        help='After a successful reset, permanently remove old data and verified collector backups; no retention timer')
     reset.add_argument('--sport',default=DEFAULT_SPORTS)
+    training=commands.add_parser('prepare-training',help='Read-only audit or versioned export for the shared participant-win model')
+    training.add_argument('--output',type=Path,help='New export directory outside collector data; omission prints only the report')
+    training.add_argument('--sport',default=DEFAULT_SPORTS)
+    training.add_argument('--lead-minutes',type=int,default=60)
+    training.add_argument('--valid-from',help='Timezone-aware validation boundary, e.g. 2026-12-01T00:00:00Z')
+    training.add_argument('--test-from',help='Timezone-aware test boundary; all rows of an event stay together')
     monitor = commands.add_parser("monitor", help="Read-only live terminal dashboard; runs alongside the collector")
     monitor.add_argument("--once", action="store_true", help="Print one snapshot without interactive screen")
     monitor.add_argument("--refresh", type=float, default=2, help="Refresh interval, seconds (0.5..60)")
@@ -66,6 +72,12 @@ def main(argv=None):
     collect.add_argument("--chromium", default=os.environ.get("CHROMIUM_EXECUTABLE") or
                         shutil.which("chromium") or shutil.which("chromium-browser"))
     args = parser.parse_args(argv)
+    if args.command=='prepare-training':
+        from .training import prepare_training
+        result=prepare_training(args.state_dir,args.finding,output=args.output,sports=args.sport,
+                                lead_minutes=args.lead_minutes,valid_from=args.valid_from,test_from=args.test_from)
+        print(json.dumps(result,ensure_ascii=False,indent=2))
+        return 0
     if args.command in ('audit','reset-data'):
         state=args.state_dir.expanduser().resolve()
         if args.command=='audit':

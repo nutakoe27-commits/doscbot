@@ -87,6 +87,17 @@ class WidgetDataTests(unittest.TestCase):
                             "session_token": "secret", "browser_session": "secret"})
         self.assertEqual(data, {"possession": 54, "ball_possession": 46})
 
+    def test_best_of_and_terminal_flags_are_preserved_without_guessing(self):
+        records=copy.deepcopy(self.fixture['records'])
+        for record in records:
+            if 'match_info_statshub' in record.get('endpoint',{}).get('path',''):
+                record['data']['doc'][0]['data']['match'].update(bestof=3,retired=False,walkover=False,disqualified=False)
+        value=normalize_widget(records,'68932518')
+        self.assertEqual(value['match']['best_of'],3)
+        self.assertIs(value['match']['retired'],False)
+        self.assertIs(value['match']['walkover'],False)
+        self.assertIs(value['match']['disqualified'],False)
+
 
 class WidgetViewsTests(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self):

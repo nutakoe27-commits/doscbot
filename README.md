@@ -6,6 +6,8 @@
 [docs/terminal-monitor.md](docs/terminal-monitor.md).
 Пять видов спорта, полный просмотр разделов и проверяемый перезапуск базы:
 [docs/multisport-restart.md](docs/multisport-restart.md).
+Подготовка общей модели «победа участника», временные выборки и аудит разметки:
+[docs/training-plan.md](docs/training-plan.md).
 
 Отдельный сборщик для будущей прогнозной модели. Использует **код парсеров**
 `nutakoe27-commits/finding` на зафиксированном коммите, без запуска сайта, Qwen

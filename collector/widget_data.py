@@ -39,6 +39,8 @@ def match(value):
             "home": team(sides.get("home")), "away": team(sides.get("away")),
             "status": value.get("status"), "result": value.get("result"),
             "periods": value.get("periods"), "postponed": value.get("postponed"),
+            "best_of": value.get("bestof"), "retired": value.get("retired"),
+            "walkover": value.get("walkover"), "disqualified": value.get("disqualified"),
             "cancelled": value.get("cancelled", value.get("canceled"))}
 
 
@@ -246,7 +248,7 @@ def normalize_widget(records, statistics_id, *, event_id=None, binding="statisti
     output['sport']=sport
     output['profile']={**PROFILES.get(sport,{'label':sport or 'Не определён','score_units':[]}),
                        'key':sport,'provider_sport':detected,'identity_verified':bool(detected and detected==sport),
-                       'scope':'collection profile; separate feature pipelines/models are required per sport'}
+                       'scope':'collection profile; shared models must retain sport-specific feature and target semantics'}
     output['capabilities']=capabilities
     participants = {side.get("id") for side in ((output["match"] or {}).get("home", {}),
                     (output["match"] or {}).get("away", {})) if side.get("id")}
