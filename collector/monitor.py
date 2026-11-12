@@ -23,6 +23,8 @@ from rich.text import Text
 
 from .monitor_data import MonitorReader
 from .store import instant
+from .monitor_sections import section_blocks, Scrolled
+from .profiles import PROFILES
 
 CYAN, VIOLET, GREEN, AMBER, RED, MUTED = "#67e8f9", "#c4b5fd", "#6ee7b7", "#fcd34d", "#fda4af", "#94a3b8"
 BORDER, BACKGROUND = "#334155", "#0b1220"
@@ -106,6 +108,7 @@ class Dashboard:
         self.selected, self.page, self.event_id = 0, 0, None
         self.paused = False
         self.refresh = 2
+        self.detail_index,self.detail_scroll=0,0
 
     def page_size(self, width, height):
         return max(1, (height-9)//2-5 if self.view == "overview" and width >= 112 else height-15)
@@ -126,6 +129,15 @@ class Dashboard:
             return True
         if key == "esc":
             self.event_id = None
+        elif self.event_id and key in ('[',']','left','right','up','down','j','k','next','prev','g'):
+            if key in ('[','left',']','right'):
+                self.detail_index=max(0,self.detail_index+(-1 if key in ('[','left') else 1))
+                self.detail_scroll=0
+            elif key=='g':
+                self.detail_scroll=0
+            else:
+                self.detail_scroll=max(0,self.detail_scroll+(-12 if key=='prev' else 12 if key=='next' else -1 if key in ('up','k') else 1))
+            return False
         elif key in ("down", "j"):
             self.selected = min(max(0, len(self.items(data))-1), self.selected+1)
         elif key in ("up", "k"):
@@ -141,6 +153,7 @@ class Dashboard:
         elif key in ("\r", "\n") and self.items(data):
             item = self.items(data)[min(self.selected, len(self.items(data))-1)]
             self.event_id = item.get("event_id") if self.view == "results" else item.get("entity_id")
+            self.detail_index,self.detail_scroll=0,0
             return True
         elif key == "p":
             self.paused = not self.paused
@@ -256,17 +269,25 @@ class Dashboard:
         item = data.get("detail") or {}
         event, widget, outcome = item.get("market_document") or {}, item.get("widget_data") or {}, item.get("event_outcome") or {}
         title = f"{event.get('home','—')} — {event.get('away','—')}  ·  {item.get('event_id',self.event_id)}"
+        blocks=section_blocks(item)
+        self.detail_index=min(self.detail_index,len(blocks))
+        if self.detail_index:
+            name,content=blocks[self.detail_index-1]
+            return panel(Scrolled(content,self.detail_scroll,max(1,rows-3)),title,
+                         f"{self.detail_index}/{len(blocks)} · {name[:65]} · [ ] раздел · ↑↓ текст · Esc назад")
         info = text(f"{event.get('competition','—')}  ·  {stamp(event.get('kickoff_at'),self.zone)}")
         method = {"sport_radar_names_time":"проверены ID, команды и время", "sport_names_time_unique":"точное совпадение команд и времени"}.get(outcome.get("method"),"связь ещё не подтверждена")
         score = text(f"Результат источника: {outcome.get('score_text','ожидается')}  ·  {method}", GREEN if outcome else MUTED)
+        sport=widget.get('sport') or event.get('sport','football')
         stats = table("Показатель сезона · всего", clean(event.get("home")), clean(event.get("away")))
         sides = []
         for side in ("home", "away"):
             team_id = (widget.get("match") or {}).get(side,{}).get("id")
             candidates = [s for s in widget.get("season_statistics", []) if s["team"].get("id") == team_id and s["window"]["kind"] == "season"]
             sides.append(candidates[-1]["scopes"]["total"] if candidates else {})
-        for key,label in (("wins","Победы"),("goals_for","Забито"),("goals_against","Пропущено"),
-                          ("both_teams_scored","Обе забивали"),("failed_to_score","Не забивали"),("clean_sheets","Сухие матчи")):
+        metric_rows=(("wins","Победы"),("goals_for","Забито"),("goals_against","Пропущено"),
+                     ("both_teams_scored","Обе забивали"),("failed_to_score","Не забивали"),("clean_sheets","Сухие матчи")) if sport=='football' else ()
+        for key,label in metric_rows:
             stats.add_row(text(label), text(sides[0].get(key)), text(sides[1].get(key)))
         missing = (widget.get("views") or {}).get("missing", [])
         notes = [text("Покрытие: "+("полное" if widget.get("coverage",{}).get("complete") else "частичное / ещё не собрано"),
@@ -277,7 +298,11 @@ class Dashboard:
                       "stability_timeout":"данные не стабилизировались", "filter_absent_or_ambiguous":"переключатель не найден однозначно",
                       "filter_state_unconfirmed":"состояние переключателя не подтверждено", "text_truncated":"текст обрезан"}.get(entry.get("reason"),"часть данных не подтверждена")
             notes.append(text(f"• {card}: {reason}", AMBER))
-        return panel(Group(info, score, Text(""), stats, *notes), title, "Esc — назад · 1–5 — вкладки")
+        index=[text(f"Вид спорта: {PROFILES.get(sport,{}).get('label',sport)} · разделов: {len(blocks)}",CYAN),
+               text('Нажмите ] или →: вся статистика, таблицы, история и рынки. ↑↓ прокручивают текст.',MUTED)]
+        index.extend(text(f"{n+1}. {name}",MUTED) for n,(name,_) in enumerate(blocks[:5]))
+        summary=[info,score,Text('')]+([stats] if metric_rows else [])+index+notes
+        return panel(Scrolled(Group(*summary),self.detail_scroll,max(1,rows-3)), title, "[ ] раздел · ↑↓ текст · Esc назад · 1–5 вкладки")
 
     def render(self, data, width, height):
         if width < 62 or height < 17:
@@ -334,7 +359,8 @@ class Dashboard:
             root["body"].update(panel(self.coverage(data,rows),"Покрытие карточек и периодов",f"Страница {self.page+1} · полное покрытие проверяется отдельно от успеха цикла"))
         else:
             root["body"].update(panel(self.errors(data,rows),"Ошибки источника и сбора"))
-        controls = ("1–5 вкладки   ↑↓ выбор   ←→ страницы   Enter карточка   r обновить   p пауза   q выход" if width >= 100
+        controls = ("[ ] разделы · ↑↓ текст · PgUp/PgDn · Esc назад · 1–5 вкладки · q выход" if self.event_id else
+                    "1–5 вкладки   ↑↓ выбор   ←→ страницы   Enter карточка   r обновить   p пауза   q выход" if width >= 100
                     else "1–5 вкладки · ↑↓ выбор · ←→ стр. · Enter · r · q выход")
         footer = Text(controls, style=MUTED)
         phase = PHASES.get(data.get("runtime",{}).get("phase"),"нет телеметрии")

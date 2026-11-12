@@ -3,9 +3,10 @@
 import asyncio
 import json
 import re
+from uuid import uuid4
 from urllib.parse import urlsplit, parse_qsl
 
-from .store import now
+from .store import now, digest
 
 PRIVATE = re.compile(r"password|passwd|token|secret|authorization|cookie|(?:^|[_-])session|api.?key|signature|email|phone|address|^(key|csrf|sid|jwt|auth|ip|ipv4|ipv6|user_?id|device_?id|client_?id)$", re.I)
 PROVIDERS = {"statshub.yunai.tech", "statshub.sportradar.com"}
@@ -64,10 +65,14 @@ class WidgetCapture:
     def __init__(self, page, statistics_id, *, max_response=2 * 1024 * 1024,
                  max_total=16 * 1024 * 1024, max_records=200):
         self.page, self.statistics_id = page, str(statistics_id)
+        self.capture_id=uuid4().hex
+        self.started_at=now()
         self.max_response, self.max_total, self.max_records = max_response, max_total, max_records
         self.records, self.pending = [], set()
+        self.seen={}
+        self.body_slots=asyncio.Semaphore(8)
         self.summary = {"responses": 0, "captured": 0, "bytes": 0, "redacted": 0,
-                        "truncated": 0, "skipped": {}, "http_errors": []}
+                        "truncated": 0, "skipped": {}, "http_errors": [],'duplicates':0}
         self.handler = self.on_response
 
     def start(self):
@@ -90,14 +95,25 @@ class WidgetCapture:
             self.summary["responses"] += 1
             if response.status >= 400 and len(self.summary["http_errors"]) < 10:
                 self.summary["http_errors"].append({**endpoint(response.url), "status": response.status})
-            if len(self.pending) >= 16 or len(self.records) + len(self.pending) >= self.max_records:
+            if len(self.records) + len(self.pending) >= self.max_records:
                 self.skip("record_limit")
                 return
-            task = asyncio.create_task(self.read(response, frame))
+            task = asyncio.create_task(self.queued_read(response, frame))
             self.pending.add(task)
             task.add_done_callback(self.pending.discard)
         except Exception:
             self.skip("unavailable_frame")
+
+    async def queued_read(self,response,frame):
+        acquired=False
+        try:
+            async with self.body_slots:
+                acquired=True
+                await self.read(response,frame)
+        except asyncio.CancelledError:
+            if not acquired:
+                self.skip('queued_read_cancelled')
+            raise
 
     async def read(self, response, frame):
         try:
@@ -115,15 +131,27 @@ class WidgetCapture:
             if len(body) > self.max_response:
                 self.skip("response_size")
                 return
+            data, changes = sanitize(json.loads(body))
+            route=endpoint(response.url)
+            key=digest({'endpoint':route,'status':response.status,'data':data})
+            observed=now()
+            frame_url=f'https://{frame.hostname}{frame.path}'
+            if key in self.seen:
+                previous=self.seen[key]
+                previous['last_observed_at']=observed
+                previous['provider_frames']=sorted(set(previous.get('provider_frames',[previous['provider_frame']]))|{frame_url})
+                self.summary['duplicates']+=1
+                return
             if self.summary["bytes"] + len(body) > self.max_total:
                 self.skip("total_size")
                 return
-            data, changes = sanitize(json.loads(body))
             self.records.append({"format": "doscbot.widget-json.v1", "statistics_id": self.statistics_id,
+                                 "capture_id":self.capture_id,
                                  "binding": "observed_event_link", "coverage": "observed_responses_only",
-                                 "observed_at": now(), "provider_frame": f"https://{frame.hostname}{frame.path}",
-                                 "endpoint": endpoint(response.url), "http_status": response.status,
+                                 "observed_at": observed, "provider_frame":frame_url,
+                                 "endpoint": route, "http_status": response.status,
                                  "data": data, **changes})
+            self.seen[key]=self.records[-1]
             self.summary["bytes"] += len(body)
             self.summary["captured"] += 1
             self.summary["redacted"] += changes["redacted"]

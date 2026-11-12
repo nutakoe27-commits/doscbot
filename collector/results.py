@@ -10,6 +10,7 @@ from playwright.async_api import Error, async_playwright
 
 from .store import encoded, instant, now
 from .runtime import update_runtime
+from .profiles import accepts
 
 URL = "https://winline.ru/"
 SCHEMA = """
@@ -32,7 +33,7 @@ def pairs_from_catalog(catalog, sport, days):
     for identifier, value in catalog["sports"].items():
         sport_id = int(identifier)
         name = value.get("name") or f"Спорт {sport_id}"
-        if sport != "all" and sport_key(name, sport_id) != sport:
+        if not accepts(sport, sport_key(name, sport_id)):
             continue
         dates = sorted({int(day) for day in value.get("dates", [])}, reverse=True)
         for day in dates:
@@ -47,7 +48,7 @@ def followed_pairs(store, catalog_value, sport, pairs):
     available = {}
     for identifier, item in catalog_value["sports"].items():
         key = sport_key(item.get("name", ""), int(identifier))
-        if sport == "all" or key == sport:
+        if accepts(sport, key):
             for day in item.get("dates", []):
                 available[(key, int(day))] = (int(identifier), int(day), item.get("name", key))
     current = instant(now())

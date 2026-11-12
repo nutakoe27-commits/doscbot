@@ -85,6 +85,22 @@ def sample_blocker(event, statistics, as_of):
     return None
 
 
+def widget_blocker(event,statistics,widget):
+    if not widget:
+        return None
+    if (str(widget.get('event_id'))!=str(event['source_event_id']) or
+            str(widget.get('statistics_id'))!=str(statistics.get('statistics_id'))):
+        return 'widget_identity_mismatch'
+    if widget.get('sport')!=event.get('sport') or not widget.get('profile',{}).get('identity_verified'):
+        return 'widget_sport_unverified'
+    source_match=widget.get('match') or {}
+    status=source_match.get('status') or {}
+    status_id=status.get('_id') if isinstance(status,dict) else status
+    if status_id not in (None,0,'0') or any((source_match.get('result') or {}).get(k) is not None for k in ('home','away')):
+        return 'widget_source_started'
+    return None
+
+
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS metadata (key TEXT PRIMARY KEY, value TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS observations (
@@ -141,7 +157,7 @@ class Store:
         with closing(self.connect()) as db, db:
             return self.observe(db, kind, entity, at, payload)
 
-    def save_sample(self, event, statistics, history, as_of):
+    def save_sample(self, event, statistics, history, as_of, *,widget=None):
         """Only source facts known before kickoff enter the sample table."""
         cutoff = instant(as_of)
         if sample_blocker(event, statistics, as_of):
@@ -160,6 +176,11 @@ class Store:
                                    "statistics_phase": statistics["match_phase"],
                                    "basis": "observed_event_link_before_kickoff" if statistics["match_phase"] == "unknown"
                                    else "explicit_prematch_statistics"}}
+        if widget:
+            if widget_blocker(event,statistics,widget):
+                return False
+            payload['widget_data']=widget
+            payload['format']='doscbot.source-input.v2'
 
         check_observation_times(payload, cutoff)
         with closing(self.connect()) as db, db:

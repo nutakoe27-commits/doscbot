@@ -10,7 +10,7 @@ import sys
 import time
 
 from .source import candidates, source_connection, sync_archive
-from .store import instant, now, sample_blocker
+from .store import instant, now, sample_blocker, widget_blocker
 from .runtime import update_runtime
 
 
@@ -25,7 +25,7 @@ def browser_options(chromium, headed=False):
     return options
 
 
-async def collect_details(store, archive, chromium, sport, limit, *, headed=False, event_id=None):
+async def collect_details(store, archive, chromium, sport, limit, *, headed=False, event_id=None, widget_budget=120, stopped=lambda: False):
     from playwright.async_api import async_playwright
     from matchlab.statistics import collect_statistics, validate_statistics
     from matchlab.winline_markets import (ensure_event_page, read_marketbook,
@@ -60,6 +60,8 @@ async def collect_details(store, archive, chromium, sport, limit, *, headed=Fals
                     await route.continue_()
             await context.route("**/*", resources)
             for index, event in enumerate(events):
+                if stopped():
+                    break
                 update_runtime(store, phase="markets", completed=index, total=len(events),
                                current_event=event["source_event_id"], current_match=f"{event['home']} — {event['away']}")
                 store.observation("event_attempt", event["source_event_id"], now(), {"url": event["url"]})
@@ -94,11 +96,12 @@ async def collect_details(store, archive, chromium, sport, limit, *, headed=Fals
                     update_runtime(store, phase="statistics")
                     observer.start()
                     views = None
+                    rich = None
                     try:
                         statistics = await collect_statistics(page, job, enable_feed=True)
-                        if statistics.get("state") == "ok":
+                        if statistics.get("state") != "blocked" and not stopped():
                             update_runtime(store, phase="filters")
-                            views = await collect_widget_views(page, observer.statistics_id)
+                            views = await collect_widget_views(page, observer.statistics_id,budget_seconds=widget_budget,stopped=stopped)
                     finally:
                         records, summary = await observer.finish()
                         result["widget_capture_states"][event["source_event_id"]] = summary
@@ -107,7 +110,7 @@ async def collect_details(store, archive, chromium, sport, limit, *, headed=Fals
                         result["widget_json"] += len(records)
                         try:
                             rich = normalize_widget(records, observer.statistics_id,
-                                event_id=event["source_event_id"], binding="observed_event_link", views=views)
+                                event_id=event["source_event_id"], binding="observed_event_link", views=views,expected_sport=event['sport'])
                         except (ValueError, TypeError, KeyError, AttributeError):
                             # An unfamiliar rich schema must not discard the
                             # independently validated legacy input or raw JSON.
@@ -117,11 +120,14 @@ async def collect_details(store, archive, chromium, sport, limit, *, headed=Fals
                             if summary["state"] != "captured":
                                 rich["coverage"]["complete"] = False
                             rich["capture"] = summary
+                            rich['capture_id']=observer.capture_id
+                            rich['capture_started_at']=observer.started_at
                             rich["observed_at"] = now()
                             store.observation("widget_data", event["source_event_id"], rich["observed_at"], rich)
                             result["widget_data"] += 1
                             result["widget_coverage"][event["source_event_id"]] = rich["coverage"]
-                    statistics = validate_statistics(statistics, document)
+                    from .statistics_compat import from_views
+                    statistics = validate_statistics(from_views(statistics,document,rich), document)
                     store.observation("team_statistics", event["source_event_id"], statistics["attempted_at"], statistics)
                     result["statistics_states"][event["source_event_id"]] = statistics["state"]
                     if statistics["state"] == "blocked":
@@ -130,7 +136,7 @@ async def collect_details(store, archive, chromium, sport, limit, *, headed=Fals
                     if statistics["state"] == "ok":
                         result["statistics"] += 1
                     cutoff = now()
-                    reason = sample_blocker(document, statistics, cutoff)
+                    reason = sample_blocker(document, statistics, cutoff) or widget_blocker(document,statistics,rich)
                     outcome = {"statistics_phase": statistics.get("match_phase"),
                                "capture_kind": statistics.get("capture_kind", "detailed"),
                                "reason": reason}
@@ -138,7 +144,7 @@ async def collect_details(store, archive, chromium, sport, limit, *, headed=Fals
                     if reason:
                         continue
                     history = build_context(int(event["source_event_id"]), archive, as_of=cutoff)
-                    saved = store.save_sample(document, statistics, history, cutoff)
+                    saved = store.save_sample(document, statistics, history, cutoff,widget=rich)
                     result["samples"] += int(saved)
                     outcome["reason"] = "saved" if saved else "duplicate"
                 except Exception as error:
@@ -175,7 +181,7 @@ def run_source(command, finding, environment, stopped):
 
 
 def cycle(store, state_dir, finding, chromium, sport, limit, history_days, stopped=lambda: False,
-          *, headed=False, result_timeout=45, result_limit=4, event_id=None):
+          *, headed=False, result_timeout=45, result_limit=4, event_id=None,widget_budget=120):
     archive = Path(state_dir) / "source" / "winline.sqlite3"
     # Never adopt a pre-existing source archive, including an old finding database.
     with closing(store.connect()) as db, db:
@@ -215,7 +221,8 @@ def cycle(store, state_dir, finding, chromium, sport, limit, history_days, stopp
                        "reason": "no_new_source_snapshot"}
             store.finish_run(run, "source_error", details)
             return False
-        details = asyncio.run(collect_details(store, archive, chromium, sport, limit, headed=headed, event_id=event_id))
+        details = asyncio.run(collect_details(store, archive, chromium, sport, limit, headed=headed, event_id=event_id,
+                                            widget_budget=widget_budget,stopped=stopped))
         if history_days and not stopped():
             from .results import collect_results
             update_runtime(store, phase="results", current_match=None, completed=0, total=0)

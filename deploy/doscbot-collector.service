@@ -1,0 +1,21 @@
+[Unit]
+Description=Doscbot sports data collector
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=doscbot-collector
+Group=doscbot-collector
+WorkingDirectory=/opt/doscbot-collector/app
+Environment=PYTHONUNBUFFERED=1
+Environment=FINDING_SOURCE_DIR=/opt/doscbot-collector/finding
+Environment=DOSCBOT_DATA_DIR=/var/lib/doscbot-collector/data
+Environment=PLAYWRIGHT_BROWSERS_PATH=/var/lib/doscbot-collector/browsers
+ExecStart=/usr/bin/xvfb-run -a -s "-screen 0 1280x720x24 -nolisten tcp" /opt/doscbot-collector/app/.venv/bin/python -m collector collect --headed --interval 300 --event-limit 10 --widget-budget 120 --sport football,hockey,tennis,basketball,volleyball --history-days 2 --result-limit 6
+Restart=on-failure
+RestartSec=30
+TimeoutStopSec=180
+
+[Install]
+WantedBy=multi-user.target

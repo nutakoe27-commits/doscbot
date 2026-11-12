@@ -167,7 +167,7 @@ class MonitorReader:
 
     def detail(self, db, identifier):
         result = {"event_id": identifier}
-        for kind in ("market_document", "widget_data", "event_outcome"):
+        for kind in ("market_document", "widget_data", "event_outcome", "team_statistics"):
             row = db.execute("SELECT payload FROM observations WHERE kind=? AND entity_id=? ORDER BY id DESC LIMIT 1",
                              (kind, identifier)).fetchone()
             result[kind] = json.loads(row[0]) if row else None

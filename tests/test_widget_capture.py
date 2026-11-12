@@ -68,6 +68,30 @@ class WidgetCaptureTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(summary["state"], "partial")
         self.assertEqual(summary["http_errors"][0]["status"], 503)
 
+    async def test_reloaded_identical_documents_deduplicate_without_losing_changes(self):
+        page = SimpleNamespace(on=lambda *args: None, remove_listener=lambda *args: None)
+        capture = WidgetCapture(page, "75512542")
+        capture.on_response(response({'stats':{'points':83}}))
+        capture.on_response(response({'stats':{'points':83}},frame='https://statshub.yunai.tech/winline/ru/match/75512542/report'))
+        capture.on_response(response({'stats':{'points':84}}))
+        records,summary=await capture.finish()
+        self.assertEqual(len(records),2)
+        self.assertEqual(summary['duplicates'],1)
+        self.assertEqual([r['data']['stats']['points'] for r in records],[83,84])
+        self.assertEqual(len(records[0]['provider_frames']),2)
+        self.assertTrue(records[0]['last_observed_at'])
+        self.assertEqual(summary['state'],'captured')
+
+    async def test_normal_burst_is_queued_instead_of_dropping_seventeenth_reply(self):
+        page = SimpleNamespace(on=lambda *args: None, remove_listener=lambda *args: None)
+        capture = WidgetCapture(page, "75512542")
+        for index in range(32):
+            capture.on_response(response({'index':index,'stats':{'points':index}}))
+        records,summary=await capture.finish()
+        self.assertEqual(len(records),32)
+        self.assertEqual(summary['skipped'],{})
+        self.assertEqual(summary['state'],'captured')
+
 
 class BrowserProbeTests(unittest.IsolatedAsyncioTestCase):
     async def test_probe_preserves_app_responses_and_captures_public_json_and_dom(self):

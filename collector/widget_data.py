@@ -10,6 +10,7 @@ from datetime import datetime, timezone
 import json
 from pathlib import Path
 import re
+from .profiles import PROFILES, provider_sport
 
 
 def team(value):
@@ -39,6 +40,53 @@ def match(value):
             "status": value.get("status"), "result": value.get("result"),
             "periods": value.get("periods"), "postponed": value.get("postponed"),
             "cancelled": value.get("cancelled", value.get("canceled"))}
+
+
+def numeric_facts(value, *, limit=1500):
+    """Preserve observed field paths; don't reinterpret points as goals/sets."""
+    output=[]
+    limited=False
+    def visit(item,path):
+        nonlocal limited
+        if len(output)>=limit:
+            limited=True
+            return
+        if isinstance(item,dict):
+            for key,child in item.items():
+                if str(key).startswith('_') or str(key).casefold() in ('uts','timestamp','id','uid','tzoffset'):
+                    continue
+                visit(child,path+[str(key)])
+        elif isinstance(item,list):
+            for index,child in enumerate(item):
+                visit(child,path+[str(index)])
+        elif isinstance(item,(int,float)) and not isinstance(item,bool):
+            output.append({'path':'.'.join(path),'value':item})
+    visit(value,[])
+    return output,limited
+
+
+def scalar_fields(value,limit=500):
+    """Categorical context matters too: surface, venue, formation, names."""
+    output=[]
+    limited=False
+    def visit(item,path):
+        nonlocal limited
+        if len(output)>=limit:
+            limited=True
+            return
+        if isinstance(item,dict):
+            for key,child in item.items():
+                visit(child,path+[str(key)])
+        elif isinstance(item,list):
+            for index,child in enumerate(item):
+                visit(child,path+[str(index)])
+        else:
+            if isinstance(item,str) and len(item)>500:
+                item=item[:500]
+                limited=True
+            output.append({'path':'.'.join(path),'value':item})
+    visit(value,[])
+    return output,limited
 
 
 def source_entries(records):
@@ -84,12 +132,12 @@ def dig(value, path):
     return value
 
 
-def standings(table, period, source):
+def standings(table, period, source, sport=None):
     output = {"season_id": str(table.get("seasonid") or ""),
               "table_id": str(table.get("_id") or ""), "name": table.get("name"),
               "group": table.get("groupname"), "tournament": table.get("tournament"),
               "period_id": period, "source": source,
-              "expected_rows": table.get("totalrows"), "rows": []}
+              "expected_rows": table.get("totalrows"), "rows": [],'source_columns':table.get('header')}
     for row in table.get("tablerows") or []:
         scopes = {}
         for scope, suffix in (("total", "Total"), ("home", "Home"), ("away", "Away")):
@@ -99,25 +147,49 @@ def standings(table, period, source):
                     "goals_against": "goalsAgainst" + suffix, "goal_difference": "goalDiff" + suffix,
                     "points": "points" + suffix}
             scopes[scope] = {key: row.get(field) for key, field in keys.items()}
+            if sport not in ('football','hockey',None):
+                scopes[scope]['score_for']=scopes[scope].pop('goals_for')
+                scopes[scope]['score_against']=scopes[scope].pop('goals_against')
         output["rows"].append({"team": team(row.get("team")), "scopes": scopes})
     output["rows_complete"] = isinstance(output["expected_rows"], int) and len(output["rows"]) == output["expected_rows"]
     return output
 
 
-def normalize_widget(records, statistics_id, *, event_id=None, binding="statistics_page_only", views=None):
+def normalize_widget(records, statistics_id, *, event_id=None, binding="statistics_page_only", views=None, expected_sport=None):
     identifier = str(statistics_id)
     if not re.fullmatch(r"\d{1,20}", identifier):
         raise ValueError("A numeric statistics ID is required")
     output = {"format": "doscbot.widget-data.v1", "statistics_id": identifier,
               "event_id": event_id, "binding": binding, "match": None,
               "season_statistics": [], "standings": [], "form": [], "recent_matches": [],
-              "head_to_head": [], "document_counts": {}, "ignored": [],
+              "head_to_head": [], "document_counts": {}, "ignored": [], "documents": [],
               "scope": "observed source data; includes schedules and current-match data; not training features"}
     counts = Counter()
     recent = {}
+    detected, capabilities = None, {}
+    fact_budget=8000
+    field_budget=4000
+    sport_context=expected_sport
+    if not sport_context:
+        for route,data,_ in source_entries(records):
+            if route[0] not in ('match_info_statshub','stats_match_get') or not isinstance(data,dict):
+                continue
+            target=data.get('match',data)
+            if str(target.get('_id'))==identifier:
+                sport_context=provider_sport(target,(data.get('sport') or {}).get('name')) or sport_context
     for route, data, source in source_entries(records):
         name, *args = route
         counts[name] += 1
+        facts,limited=numeric_facts(data,limit=min(1500,fact_budget)) if any(word in name for word in ('stats','squad','lineup','injur','timeline')) else ([],False)
+        fact_budget-=len(facts)
+        fields,fields_limited=scalar_fields(data,limit=min(500,field_budget))
+        field_budget-=len(fields)
+        # Document values remain in widget_json; retain a bounded searchable
+        # projection for any source schema, alongside the typed football data.
+        output['documents'].append({'name':name,'source':source,'numeric':facts,'truncated':limited,
+                                    'fields':fields,'fields_truncated':fields_limited,
+                                    'keys':list(data)[:100] if isinstance(data,dict) else [],
+                                    'items':len(data) if isinstance(data,list) else None})
         if not isinstance(data, dict):
             continue
         if name in ("match_info_statshub", "stats_match_get"):
@@ -128,7 +200,12 @@ def normalize_widget(records, statistics_id, *, event_id=None, binding="statisti
             # Prefer the detailed match_info status over the generic null status.
             if output["match"] is None or name == "match_info_statshub":
                 output["match"] = {**match(item), "season": data.get("season"), "source": source}
+                detected=provider_sport(item,(data.get('sport') or {}).get('name'))
+                output['provider_sport_id']=item.get('_sid')
+                capabilities=data.get('statscoverage') or {}
         elif name == "stats_season_teamscoringconceding" and len(args) == 3:
+            if sport_context not in ('football','hockey'):
+                continue
             if team(data.get("team")).get("id") != args[1]:
                 output["ignored"].append({"source": source, "reason": "team_id_mismatch"})
                 continue
@@ -146,24 +223,31 @@ def normalize_widget(records, statistics_id, *, event_id=None, binding="statisti
             else:
                 tables = data.get("tables") or []
                 period = args[1] if len(args) > 1 and args[1] else None
-            output["standings"].extend(standings(t, period, source) for t in tables if isinstance(t, dict))
+            output["standings"].extend(standings(t, period, source,sport_context) for t in tables if isinstance(t, dict))
         elif name == "stats_formtable":
             for item in data.get("teams") or []:
                 output["form"].append({"season_id": str((data.get("season") or {}).get("_id") or ""),
                     "team": team(item.get("team")), "form": item.get("form"),
                     "form_table_position": item.get("position"), "source": source})
-        elif name == "stats_team_lastx":
+        elif name in ("stats_team_lastx","stats_player_lastx"):
             for item in data.get("matches") or []:
                 item = match(item)
                 # Include the team context, but don't duplicate a match by view.
-                key = (team(data.get("team")).get("id"), item["statistics_id"])
-                recent[key] = {**item, "participant": team(data.get("team")), "source": source,
+                participant=team(data.get('team') or data.get('player'))
+                key = (participant.get("id"), item["statistics_id"])
+                recent[key] = {**item, "participant": participant, "source": source,
                                "is_target": item["statistics_id"] == identifier}
         elif name == "stats_h2h_versus":
             output["head_to_head"].append({"source": source, "data": data})
     output["recent_matches"] = list(recent.values())
     output["document_counts"] = dict(sorted(counts.items()))
     output["views"] = views or {"state": "not_collected", "snapshots": []}
+    sport=expected_sport or detected
+    output['sport']=sport
+    output['profile']={**PROFILES.get(sport,{'label':sport or 'Не определён','score_units':[]}),
+                       'key':sport,'provider_sport':detected,'identity_verified':bool(detected and detected==sport),
+                       'scope':'collection profile; separate feature pipelines/models are required per sport'}
+    output['capabilities']=capabilities
     participants = {side.get("id") for side in ((output["match"] or {}).get("home", {}),
                     (output["match"] or {}).get("away", {})) if side.get("id")}
     season_rows = [x for x in output["season_statistics"] if x["window"]["kind"] == "season"]
@@ -198,6 +282,32 @@ def normalize_widget(records, statistics_id, *, event_id=None, binding="statisti
         and not output["coverage"]["missing_table_period_ids"]
         and not any(output["coverage"]["missing_table_participants"].values())
         and output["views"].get("state") == "captured")
+    if sport!='football':
+        output['coverage']={'matched_target':output['match'] is not None,
+            'scope':'source-discovered sport-specific cards and filters; unknown metrics keep source field paths',
+            'filter_state':output['views'].get('state','not_collected'),
+            'table_period_ids':periods, 'complete':False}
+    snapshots=output['views'].get('snapshots',[])
+    non_history=[s for s in snapshots if not re.search(r'последние матчи|последние встречи|last matches|head.to.head',s.get('title',''),re.I)
+                 and (s.get('rows') or s.get('tables') or s.get('percentages'))]
+    rich_docs=[d for d in output['documents'] if d['numeric'] and re.search(r'scoringconceding|season_tables|formtable|overunder|squad|lineup|stats_match_stats|player_stats|team_stats',d['name'])]
+    reasons=[]
+    if output['match'] is None: reasons.append('target_identity_missing')
+    if not output['profile']['identity_verified']: reasons.append('sport_identity_unconfirmed')
+    if not non_history and not rich_docs: reasons.append('only_history_or_no_rich_statistics')
+    if output['views'].get('state')!='captured': reasons.append('view_capture_incomplete')
+    if any(d['truncated'] for d in output['documents']): reasons.append('numeric_projection_truncated_raw_preserved')
+    output['coverage']['sport_identity_verified']=output['profile']['identity_verified']
+    output['coverage']['scope']='source-discovered sport-specific cards and filters; core football season/table checks when applicable'
+    output['coverage']['sections']=len(snapshots)
+    output['coverage']['rich_sections']=len(non_history)
+    output['coverage']['documents']=len(output['documents'])
+    output['coverage']['reasons']=reasons
+    output['coverage']['usable_rich_capture']=not [r for r in reasons if r!='numeric_projection_truncated_raw_preserved']
+    if sport!='football':
+        output['coverage']['complete']=not reasons
+    else:
+        output['coverage']['complete']=output['coverage']['complete'] and not reasons
     return output
 
 

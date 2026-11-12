@@ -8,6 +8,7 @@ import subprocess
 import sys
 
 from .store import digest, instant
+from .profiles import accepts, balanced
 
 ROOT = Path(__file__).resolve().parent.parent
 PIN = json.loads((ROOT / "finding-source.json").read_text())
@@ -99,7 +100,7 @@ def candidates(path, sport, limit, cutoff, last_attempts=None, event_id=None):
             if event_id is not None and str(value["event_id"]) != str(event_id):
                 continue
             key = sport_key(value["sport_label"], value["sport_id"])
-            if sport != "all" and key != sport:
+            if not accepts(sport, key):
                 continue
             if not value["kickoff_at"] or instant(value["kickoff_at"]) <= instant(cutoff):
                 continue
@@ -115,4 +116,4 @@ def candidates(path, sport, limit, cutoff, last_attempts=None, event_id=None):
                 selected.append({**metadata, "url": url})
     last_attempts = last_attempts or {}
     selected.sort(key=lambda e: (last_attempts.get(e["source_event_id"], ""), instant(e["kickoff_at"])))
-    return selected[:limit]
+    return balanced(selected, limit)

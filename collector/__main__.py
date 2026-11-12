@@ -12,6 +12,7 @@ from datetime import timedelta
 
 from .source import ROOT, load_finding
 from .store import Store
+from .profiles import DEFAULT_SPORTS,selection
 
 
 def needs_backoff(status):
@@ -28,6 +29,11 @@ def main(argv=None):
     parser.add_argument("--finding", type=Path, default=Path(os.environ.get("FINDING_SOURCE_DIR", ROOT.parent / "finding")))
     commands = parser.add_subparsers(dest="command", required=True)
     commands.add_parser("status")
+    check=commands.add_parser('audit',help='Read-only evidence of rich data for each requested sport')
+    check.add_argument('--sport',default=DEFAULT_SPORTS)
+    reset=commands.add_parser('reset-data',help='Audit-gated rotation of owned databases with a recoverable backup')
+    reset.add_argument('--apply',action='store_true')
+    reset.add_argument('--sport',default=DEFAULT_SPORTS)
     monitor = commands.add_parser("monitor", help="Read-only live terminal dashboard; runs alongside the collector")
     monitor.add_argument("--once", action="store_true", help="Print one snapshot without interactive screen")
     monitor.add_argument("--refresh", type=float, default=2, help="Refresh interval, seconds (0.5..60)")
@@ -46,9 +52,10 @@ def main(argv=None):
     collect = commands.add_parser("collect")
     collect.add_argument("--once", action="store_true")
     collect.add_argument("--interval", type=int, default=300, help="Delay after each completed cycle")
-    collect.add_argument("--sport", default="football")
+    collect.add_argument("--sport", default=DEFAULT_SPORTS,help="Comma-separated sport keys, or all")
     collect.add_argument("--event-limit", type=int, default=5)
     collect.add_argument("--event-id", help="Only this observed upcoming event; never substitute another")
+    collect.add_argument('--widget-budget',type=int,default=120,help='Per-event rich widget budget, seconds (30..300)')
     collect.add_argument("--history-days", type=int, default=2)
     collect.add_argument("--result-timeout", type=int, default=45, help="Result reply timeout, seconds")
     collect.add_argument("--result-limit", type=int, default=4, help="Maximum sport/day result jobs per cycle")
@@ -57,6 +64,21 @@ def main(argv=None):
     collect.add_argument("--chromium", default=os.environ.get("CHROMIUM_EXECUTABLE") or
                         shutil.which("chromium") or shutil.which("chromium-browser"))
     args = parser.parse_args(argv)
+    if args.command in ('audit','reset-data'):
+        state=args.state_dir.expanduser().resolve()
+        if args.command=='audit':
+            from .audit import audit
+            result=audit(state,args.sport)
+        else:
+            from .reset import reset_data
+            from .source import PIN
+            result=reset_data(state,args.finding,PIN['commit'],apply=args.apply,sports=args.sport)
+        print(json.dumps(result,ensure_ascii=False,indent=2))
+        return 0
+    if args.command=='collect':
+        selection(args.sport)
+        if not 30<=args.widget_budget<=300:
+            parser.error('widget-budget must be 30..300 seconds')
     if args.command == "monitor":
         if not .5 <= args.refresh <= 60:
             parser.error("refresh must be 0.5..60 seconds")
@@ -132,7 +154,7 @@ def main(argv=None):
             while running:
                 ok = cycle(store, state, finding, args.chromium, args.sport, args.event_limit, args.history_days,
                            stopped=lambda: not running, headed=args.headed,
-                           result_timeout=args.result_timeout, result_limit=args.result_limit, event_id=args.event_id)
+                           result_timeout=args.result_timeout, result_limit=args.result_limit, event_id=args.event_id,widget_budget=args.widget_budget)
                 status = store.status()
                 print(json.dumps(status, ensure_ascii=False), flush=True)
                 if args.once:
