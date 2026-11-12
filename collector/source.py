@@ -108,6 +108,7 @@ def candidates(path, sport, limit, cutoff, last_attempts=None, event_id=None):
             if len(members) != 2 or not all(isinstance(x, str) and x for x in members):
                 continue
             metadata = {"source_event_id": str(value["event_id"]), "sport": key,
+                        "native_radar_id":value.get('radar_id'),
                         "sport_label": value["sport_label"], "home": members[0], "away": members[1],
                         "competition": value["competition"], "kickoff_at": value["kickoff_at"],
                         "phase": "prematch", "source_kind": "stream"}

@@ -292,6 +292,17 @@ class Dashboard:
         missing = (widget.get("views") or {}).get("missing", [])
         notes = [text("Покрытие: "+("полное" if widget.get("coverage",{}).get("complete") else "частичное / ещё не собрано"),
                       GREEN if widget.get("coverage",{}).get("complete") else AMBER)]
+        diagnostic=item.get('event_diagnostic') or {}
+        reason=diagnostic.get('reason') or ('statistics_link_'+event['statistics_link_status'] if event.get('statistics_link_status') in ('missing','ambiguous') else None)
+        explanations={'statistics_link_missing':'Ссылка на статистику у этого события не обнаружена.',
+                      'statistics_link_ambiguous':'Несколько ссылок: статистика не привязана однозначно.',
+                      'statistics_blocked':'Провайдер ограничил доступ к статистике.',
+                      'rich_normalization_error':'Исходные документы сохранены; обработка их структуры не завершена.',
+                      'no_current_market_feed':'Свежая линия события не подтверждена.'}
+        if reason:
+            notes.append(text(explanations.get(reason,'Причина: '+reason),AMBER))
+        if diagnostic.get('error_type'):
+            notes.append(text(f"Этап: {diagnostic.get('stage','—')} · {diagnostic['error_type']}",RED))
         for entry in missing[:max(1,rows-15)]:
             card = {"card__form":"Форма", "card__seasonStatistics":"Статистика сезона", "card__leagueTable":"Таблица"}.get(entry.get("card_id"),"Виджет")
             reason = {"card_absent":"блок не появился", "card_unavailable":"блок не прочитан", "time_budget":"исчерпано время обхода",

@@ -8,6 +8,8 @@ import signal
 import subprocess
 import sys
 import time
+import re
+from uuid import uuid4
 
 from .source import candidates, source_connection, sync_archive
 from .store import instant, now, sample_blocker, widget_blocker
@@ -28,13 +30,13 @@ def browser_options(chromium, headed=False):
 async def collect_details(store, archive, chromium, sport, limit, *, headed=False, event_id=None, widget_budget=120, stopped=lambda: False):
     from playwright.async_api import async_playwright
     from matchlab.statistics import collect_statistics, validate_statistics
-    from matchlab.winline_markets import (ensure_event_page, read_marketbook,
-                                        discover_statistics_link, market_document)
+    from matchlab.winline_markets import ensure_event_page, read_marketbook, market_document
     from matchlab.worker_protocol import market_feed
     from winline.team_context import build_context
     from .widget_capture import WidgetCapture
     from .widget_data import normalize_widget
     from .widget_views import collect_widget_views
+    from .statistics_link import resolve_statistics_link
 
     with closing(store.connect()) as db:
         attempts = {r["entity_id"]: r["at"] for r in db.execute(
@@ -64,7 +66,11 @@ async def collect_details(store, archive, chromium, sport, limit, *, headed=Fals
                     break
                 update_runtime(store, phase="markets", completed=index, total=len(events),
                                current_event=event["source_event_id"], current_match=f"{event['home']} — {event['away']}")
-                store.observation("event_attempt", event["source_event_id"], now(), {"url": event["url"]})
+                attempt={'attempt_id':uuid4().hex,'sport':event['sport'],'url':event['url'],
+                         'home':event['home'],'away':event['away'],'competition':event.get('competition'),
+                         'native_radar_id':event.get('native_radar_id'),'started_at':now(),
+                         'stage':'navigation','state':'running','reason':None}
+                store.observation("event_attempt", event["source_event_id"],attempt['started_at'],attempt)
                 page = await context.new_page()
                 sockets = []
                 def opened(socket):
@@ -77,23 +83,33 @@ async def collect_details(store, archive, chromium, sport, limit, *, headed=Fals
                 try:
                     response = await page.goto(event["url"], wait_until="domcontentloaded", timeout=45000)
                     if response and response.status in (401, 403, 429):
+                        attempt.update(state='blocked',reason=f'source_http_{response.status}')
                         result["errors"].append({"event_id": event["source_event_id"], "type": "source_blocked"})
                         break
                     await ensure_event_page(page, event["url"], event)
+                    attempt['stage']='markets'
                     raw = await read_marketbook(page)
                     if not any(s["connected"] and s["last_at"] and
                                (instant(now())-instant(s["last_at"])).total_seconds() <= 180 for s in sockets):
+                        attempt['reason']='no_current_market_feed'
                         raise ValueError("No current source market feed")
-                    raw["statistics_links"] = await discover_statistics_link(page, raw)
-                    document = market_document(raw, page.url, now(), event)
+                    event_page_url=page.url
+                    attempt['stage']='statistics_link'
+                    raw["statistics_links"],link_diagnostic = await resolve_statistics_link(page,raw,event['source_event_id'])
+                    attempt['link_discovery']=link_diagnostic
+                    document = market_document(raw, event_page_url, now(), event)
                     store.observation("market_document", event["source_event_id"], document["observed_at"], document)
                     result["market_documents"] += 1
+                    attempt.update(market_document_saved=True,statistics_link_status=document.get('statistics_link_status'),
+                                   statistics_url=document.get('statistics_url'))
                     if document.get("statistics_link_status") != "found":
+                        attempt.update(state='skipped',reason='statistics_link_'+str(document.get('statistics_link_status','missing')))
                         result["statistics_states"][event["source_event_id"]] = "missing_link"
                         continue
                     job = {**document, "url": document["url"]}
                     observer = WidgetCapture(page, document["statistics_url"].rstrip("/").rsplit("/", 1)[-1])
                     update_runtime(store, phase="statistics")
+                    attempt['stage']='statistics'
                     observer.start()
                     views = None
                     rich = None
@@ -101,13 +117,19 @@ async def collect_details(store, archive, chromium, sport, limit, *, headed=Fals
                         statistics = await collect_statistics(page, job, enable_feed=True)
                         if statistics.get("state") != "blocked" and not stopped():
                             update_runtime(store, phase="filters")
+                            attempt['stage']='filters'
                             views = await collect_widget_views(page, observer.statistics_id,budget_seconds=widget_budget,stopped=stopped)
+                    except Exception:
+                        attempt['failed_stage']=attempt['stage']
+                        raise
                     finally:
                         records, summary = await observer.finish()
                         result["widget_capture_states"][event["source_event_id"]] = summary
                         for record in records:
                             store.observation("widget_json", event["source_event_id"], record["observed_at"], record)
                         result["widget_json"] += len(records)
+                        attempt.update(widget_json=len(records),raw_capture_state=summary['state'])
+                        attempt['stage']='normalization'
                         try:
                             rich = normalize_widget(records, observer.statistics_id,
                                 event_id=event["source_event_id"], binding="observed_event_link", views=views,expected_sport=event['sport'])
@@ -116,6 +138,7 @@ async def collect_details(store, archive, chromium, sport, limit, *, headed=Fals
                             # independently validated legacy input or raw JSON.
                             result["widget_coverage"][event["source_event_id"]] = {
                                 "complete": False, "state": "normalization_error"}
+                            attempt['reason']='rich_normalization_error'
                         else:
                             if summary["state"] != "captured":
                                 rich["coverage"]["complete"] = False
@@ -126,11 +149,15 @@ async def collect_details(store, archive, chromium, sport, limit, *, headed=Fals
                             store.observation("widget_data", event["source_event_id"], rich["observed_at"], rich)
                             result["widget_data"] += 1
                             result["widget_coverage"][event["source_event_id"]] = rich["coverage"]
+                            attempt['coverage_reasons']=rich['coverage'].get('reasons',[])
                     from .statistics_compat import from_views
+                    attempt['stage']='validation'
                     statistics = validate_statistics(from_views(statistics,document,rich), document)
                     store.observation("team_statistics", event["source_event_id"], statistics["attempted_at"], statistics)
                     result["statistics_states"][event["source_event_id"]] = statistics["state"]
+                    attempt['statistics_state']=statistics['state']
                     if statistics["state"] == "blocked":
+                        attempt.update(state='blocked',reason='statistics_blocked')
                         result["errors"].append({"event_id": event["source_event_id"], "type": "statistics_blocked"})
                         break
                     if statistics["state"] == "ok":
@@ -142,15 +169,28 @@ async def collect_details(store, archive, chromium, sport, limit, *, headed=Fals
                                "reason": reason}
                     result["sample_outcomes"][event["source_event_id"]] = outcome
                     if reason:
+                        attempt.update(state='partial',reason=reason)
                         continue
+                    attempt['stage']='sample'
                     history = build_context(int(event["source_event_id"]), archive, as_of=cutoff)
                     saved = store.save_sample(document, statistics, history, cutoff,widget=rich)
                     result["samples"] += int(saved)
                     outcome["reason"] = "saved" if saved else "duplicate"
+                    attempt.update(state='input_saved' if saved else 'duplicate',input_format='v2' if rich else 'v1')
                 except Exception as error:
                     # Fixed class only: exception messages can contain URLs or page content.
-                    result["errors"].append({"event_id": event["source_event_id"], "type": type(error).__name__})
+                    code=getattr(error,'code',None)
+                    code=code if isinstance(code,str) and re.fullmatch('[a-z_]{1,80}',code) else None
+                    attempt.update(state='error',error_type=type(error).__name__,error_code=code)
+                    attempt['stage']=attempt.get('failed_stage',attempt['stage'])
+                    attempt['reason']=attempt['reason'] or code or 'exception_at_'+attempt['stage']
+                    result["errors"].append({"event_id": event["source_event_id"], "type": type(error).__name__,
+                                             'stage':attempt['stage'],'code':code})
                 finally:
+                    if attempt['state']=='running':
+                        attempt.update(state='stopped' if stopped() else 'interrupted',reason='attempt_not_completed')
+                    attempt['finished_at']=now()
+                    store.observation('event_diagnostic',event['source_event_id'],attempt['finished_at'],attempt)
                     await page.close()
                     update_runtime(store, completed=index+1)
                 await asyncio.sleep(1)
