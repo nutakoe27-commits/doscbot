@@ -65,6 +65,23 @@ class AuditDiagnosticsTests(unittest.TestCase):
         self.assertEqual(latest['error_type'],'ValueError')
         self.assertEqual(report['last_run']['state'],'partial')
 
+    def test_latest_capture_explains_filter_failures_without_dumping_source_text(self):
+        self.store.observation('widget_data','7',self.at,{'sport':'football','statistics_id':'700',
+            'profile':{'identity_verified':True},'capture':{'state':'captured'},
+            'coverage':{'reasons':['view_capture_incomplete'],'season_participants':['A','B'],'sections':6,'documents':39},
+            'views':{'format':'doscbot.widget-views.v2','state':'partial','snapshots':[{'text':'large source text'}],
+                'missing':[{'reason':'selection_failed'},{'reason':'selection_failed'},{'reason':'incomplete_filter_states'}],
+                'groups':{'statistics:card__scoringConceding':{'captured':12,'expected':24},
+                          'overview:card__lastMatches':{'captured':1,'expected':1}}}})
+        report=audit(self.state)
+        latest=report['sports']['football']['latest']
+        self.assertEqual(latest['view_state'],'partial')
+        self.assertEqual(latest['view_failures'],{'selection_failed':2,'incomplete_filter_states':1})
+        self.assertEqual(latest['incomplete_filter_groups'],[{'card':'statistics:card__scoringConceding','captured':12,'expected':24}])
+        self.assertNotIn('snapshots',latest)
+        self.assertFalse(latest['qualified'])
+        self.assertFalse(report['ready_to_reset'])
+
 
 class StatisticsLinkTests(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self):

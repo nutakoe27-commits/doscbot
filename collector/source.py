@@ -1,6 +1,7 @@
 """Read finding's parser code, never its database, configuration or model."""
 
 from contextlib import closing
+from datetime import timedelta
 import json
 from pathlib import Path
 import sqlite3
@@ -83,7 +84,7 @@ def sync_archive(store, path):
     return counts
 
 
-def candidates(path, sport, limit, cutoff, last_attempts=None, event_id=None):
+def candidates(path, sport, limit, cutoff, last_attempts=None, event_id=None, link_statuses=None):
     """Only source-observed upcoming matches; no guessed statistics IDs."""
     from matchlab.archive import sport_key
     from matchlab.sports import match_url
@@ -116,5 +117,19 @@ def candidates(path, sport, limit, cutoff, last_attempts=None, event_id=None):
             if url:
                 selected.append({**metadata, "url": url})
     last_attempts = last_attempts or {}
-    selected.sort(key=lambda e: (last_attempts.get(e["source_event_id"], ""), instant(e["kickoff_at"])))
+    link_statuses = link_statuses or {}
+    refresh_before = instant(cutoff) - timedelta(minutes=30)
+    def priority(event):
+        identifier = event['source_event_id']
+        status = link_statuses.get(identifier)
+        radar = event.get('native_radar_id')
+        # This is an availability hint only. Statistics identity still comes
+        # from an observed event link; never build a widget URL from radar.
+        promising = status=='found' or (status not in ('missing','ambiguous') and isinstance(radar,int) and radar>0)
+        attempted = last_attempts.get(identifier, '')
+        # Once refreshed, a rich event rejoins normal rotation so unknown and
+        # missing links still get opportunities rather than starving forever.
+        due = not attempted or instant(attempted) <= refresh_before
+        return (0 if promising and due else 1, attempted, instant(event['kickoff_at']))
+    selected.sort(key=priority)
     return balanced(selected, limit)

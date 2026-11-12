@@ -41,7 +41,10 @@ async def collect_details(store, archive, chromium, sport, limit, *, headed=Fals
     with closing(store.connect()) as db:
         attempts = {r["entity_id"]: r["at"] for r in db.execute(
             "SELECT entity_id,max(observed_at) at FROM observations WHERE kind='event_attempt' GROUP BY entity_id")}
-    events = candidates(archive, sport, limit, now(), attempts, event_id=event_id)
+        link_statuses = {r['entity_id']:r['status'] for r in db.execute(
+            "SELECT entity_id,json_extract(payload,'$.statistics_link_status') status FROM observations WHERE id IN "
+            "(SELECT max(id) FROM observations WHERE kind='market_document' GROUP BY entity_id)")}
+    events = candidates(archive, sport, limit, now(), attempts, event_id=event_id, link_statuses=link_statuses)
     update_runtime(store, phase="details", completed=0, total=len(events), current_match=None)
     result = {"selected": len(events), "market_documents": 0, "statistics": 0,
               "samples": 0, "errors": [], "statistics_states": {}, "sample_outcomes": {},

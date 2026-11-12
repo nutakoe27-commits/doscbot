@@ -16,10 +16,12 @@ from .widget_capture import DATA_HOSTS, PROVIDERS
 
 
 CARD_SCRIPT = r'''({cardId, groups=[], labels=[], action='read'}) => {
-    let cards=[...document.querySelectorAll('[data-testid]')].filter(e=>e.dataset.testid===cardId && e.getClientRects().length);
+    const visible=e=>e.getClientRects().length>0 && getComputedStyle(e).visibility!=='hidden' &&
+        getComputedStyle(e).display!=='none' && !e.closest('[hidden],[aria-hidden="true"]');
+    let cards=[...document.querySelectorAll('[data-testid]')].filter(e=>e.dataset.testid===cardId && visible(e));
     if(cardId.startsWith('page:')) cards=[document.body];
     if(cardId.startsWith('heading:')) {
-        cards=[...document.querySelectorAll('h3')].filter(e=>(e.innerText||'').trim()===cardId.slice(8) && e.getClientRects().length).map(h=>{
+        cards=[...document.querySelectorAll('h3')].filter(e=>(e.innerText||'').trim()===cardId.slice(8) && visible(e)).map(h=>{
             let card=h.parentElement;
             for(let p=card.parentElement;p && p!==document.body;p=p.parentElement) {
                 if(p.querySelectorAll('h3').length!==1 || (p.innerText||'').length>100000) break;
@@ -31,25 +33,33 @@ CARD_SCRIPT = r'''({cardId, groups=[], labels=[], action='read'}) => {
     if(['home','away'].includes(cardId)) cards=cards.filter(e=>e.querySelector('h3'));
     if(cards.length!==1) return {ok:false, reason:cards.length ? 'ambiguous_card' : 'card_absent'};
     const card=cards[0], text=e=>(e.innerText || '').replace(/[\u200b-\u200f\u202a-\u202e\u2066-\u2069]/g,'').trim();
-    const buttons=[...card.querySelectorAll('button')].filter(e=>e.getClientRects().length);
+    const label=e=>text(e).replace(/\s+/g,' ');
+    const buttons=[...card.querySelectorAll('button')].filter(visible);
     const active=b=>b.getAttribute('aria-pressed') ?? b.getAttribute('aria-selected');
+    const parents=[...new Set(buttons.map(b=>b.parentElement))];
+    const sourceGroups=parents.map(node=>({node,buttons:[...node.children].filter(b=>b.tagName==='BUTTON'&&visible(b))})).filter(g=>g.buttons.length>=2);
     const selected=[];
     for(let i=0;i<groups.length;i++) {
-        const matches=groups[i].map(label=>buttons.filter(b=>text(b)===label));
-        if(matches.some(v=>v.length!==1)) return {ok:false,reason:'filter_absent_or_ambiguous'};
-        const group=matches.map(v=>v[0]);
+        const wanted=groups[i].map(s=>s.replace(/\s+/g,' ').trim());
+        const candidates=sourceGroups.filter(g=>g.buttons.length===wanted.length && g.buttons.every((b,j)=>label(b)===wanted[j]));
+        const occurrence=groups.slice(0,i).filter(g=>JSON.stringify(g)===JSON.stringify(groups[i])).length;
+        const expectedCount=groups.filter(g=>JSON.stringify(g)===JSON.stringify(groups[i])).length;
+        if(candidates.length!==expectedCount) return {ok:false,reason:'filter_absent_or_ambiguous'};
+        const group=candidates[occurrence].buttons;
         if(group.some(b=>!['true','false'].includes(active(b))) ||
            group.filter(b=>active(b)==='true').length!==1)
             return {ok:false,reason:'filter_state_unconfirmed'};
-        selected.push(text(group.find(b=>active(b)==='true')));
+        selected.push(label(group.find(b=>active(b)==='true')));
         if(labels.length) {
-            const target=group.find(b=>text(b)===labels[i]);
+            const target=group.find(b=>label(b)===labels[i]);
             if(!target || target.disabled) return {ok:false,reason:'filter_disabled'};
             if(action==='click' && active(target)!=='true') {
-                target.click(); return {ok:true,clicked:true};
+                target.click(); return {ok:true,clicked:true,group_index:i,target:labels[i]};
             }
         }
     }
+    if(action==='check') return {ok:true,selected,
+        loading:!!card.querySelector('[aria-busy="true"],[role="progressbar"]')};
     if(labels.length && labels.some((label,i)=>selected[i]!==label)) return {ok:false,reason:'filter_not_selected'};
     // Read from the rendered source, while removing private form text.
     let content=text(card);
@@ -72,11 +82,11 @@ CARD_SCRIPT = r'''({cardId, groups=[], labels=[], action='read'}) => {
     }));
     const discovered=[];
     for(const button of buttons) {
-        const siblings=[...button.parentElement.children].filter(e=>e.tagName==='BUTTON' && e.getClientRects().length);
+        const siblings=[...button.parentElement.children].filter(e=>e.tagName==='BUTTON' && visible(e));
         if(siblings.length<2 || discovered.some(g=>g.node===button.parentElement)) continue;
         const supported=siblings.every(b=>['true','false'].includes(active(b))) &&
             siblings.filter(b=>active(b)==='true').length===1;
-        if(supported) discovered.push({node:button.parentElement,labels:siblings.map(text)});
+        if(supported) discovered.push({node:button.parentElement,labels:siblings.map(label)});
     }
     if(cardId==='card__form') {
         for(const p of card.querySelectorAll('p')) {
@@ -90,14 +100,15 @@ CARD_SCRIPT = r'''({cardId, groups=[], labels=[], action='read'}) => {
             }
         }
     }
-    return {ok:true,selected:groups.length?selected:discovered.map(g=>text([...g.node.children].find(b=>active(b)==='true'))),
+    return {ok:true,selected:groups.length?selected:discovered.map(g=>label([...g.node.children].find(b=>visible(b)&&active(b)==='true'))),
             groups:discovered.map(g=>g.labels),title:cardId.startsWith('page:')?'Содержимое вкладки '+cardId.slice(5):text(card.querySelector('h3')||card).slice(0,300),
             rows,tables,percentages,text:content.slice(0,100000),truncated:content.length>100000 || tables.some(t=>t.truncated),
             loading:!!card.querySelector('[aria-busy="true"],[role="progressbar"]')};
 }'''
 
 INVENTORY_SCRIPT = r'''() => {
-    const visible=e=>e.getClientRects().length>0;
+    const visible=e=>e.getClientRects().length>0 && getComputedStyle(e).visibility!=='hidden' &&
+        getComputedStyle(e).display!=='none' && !e.closest('[hidden],[aria-hidden="true"]');
     const ids=[...new Set([...document.querySelectorAll('[data-testid]')].filter(e=>visible(e) &&
         (e.dataset.testid.startsWith('card__') || ['home','away'].includes(e.dataset.testid)&&e.querySelector('h3')))
         .map(e=>e.dataset.testid).filter(s=>/^[A-Za-z0-9_:-]{1,100}$/.test(s)))];
@@ -123,25 +134,59 @@ def matches_frame(frame, identifier):
 
 
 async def selected_snapshot(frame, card_id, groups, labels, deadline, network=None):
-    args = {"cardId": card_id, "groups": groups, "labels": list(labels), "action": "click"}
-    for _ in range(len(groups) + 1):
+    args = {"cardId": card_id, "groups": groups, "labels": list(labels), "action": "check"}
+    transient = {"card_absent", "filter_absent_or_ambiguous", "filter_state_unconfirmed", "filter_disabled"}
+    pending = None
+    reason = "selection_failed"
+    while time.monotonic() < deadline:
+        # Cards attach before their controls hydrate. Re-resolve the source
+        # groups while waiting, including after React replaces a card.
         state = await frame.evaluate(CARD_SCRIPT, args)
         if not state.get("ok"):
-            return None, state.get("reason", "unavailable")
-        if not state.get("clicked"):
-            break
-        await asyncio.sleep(.15)
+            reason = state.get("reason", "unavailable")
+            if reason not in transient:
+                return None, reason
+        else:
+            selected = state["selected"]
+            settled = not network or (not network["pending"] and time.monotonic()-network["last_activity"] >= .3)
+            if pending is not None:
+                # Send each click once and wait for its aria acknowledgement.
+                # Repeated clicks can cancel a delayed source transition.
+                index, target = pending
+                if selected[index] == target and not state.get("loading") and settled:
+                    pending = None
+                else:
+                    reason = "selection_failed"
+                    await asyncio.sleep(.1)
+                    continue
+            if selected == list(labels) and not state.get("loading") and settled:
+                break
+            if not state.get("loading") and settled:
+                clicked = await frame.evaluate(CARD_SCRIPT, {**args, "action": "click"})
+                if clicked.get("clicked"):
+                    pending = (clicked["group_index"], clicked["target"])
+                    reason = "selection_failed"
+                elif not clicked.get("ok"):
+                    reason = clicked.get("reason", "unavailable")
+                    if reason not in transient:
+                        return None, reason
+        await asyncio.sleep(.1)
     else:
-        return None, "selection_failed"
+        return None, reason
     args["action"] = "read"
     # Equal figures in two different filters are legitimate. Confirm both the
     # selected source state and stable data, rather than requiring a change.
-    await asyncio.sleep(.4)
+    await asyncio.sleep(min(.4, max(0, deadline-time.monotonic())))
     previous, stable = None, 0
     while time.monotonic() < deadline:
         state = await frame.evaluate(CARD_SCRIPT, args)
         if not state.get("ok"):
-            return None, state.get("reason", "unavailable")
+            reason = state.get("reason", "unavailable")
+            if reason not in transient:
+                return None, reason
+            previous, stable = None, 0
+            await asyncio.sleep(.1)
+            continue
         signature = json.dumps([state.get("selected"), state.get("text"), state.get("rows")], ensure_ascii=False)
         settled = not network or (not network["pending"] and time.monotonic()-network["last_activity"] >= .3)
         stable = stable + 1 if previous == signature and not state.get("loading") and settled else 0

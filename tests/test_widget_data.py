@@ -137,6 +137,63 @@ class WidgetViewsTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result["state"], "partial")
         self.assertEqual(result["snapshots"], [])
 
+    async def test_controls_can_hydrate_after_the_card_attaches(self):
+        await self.page.set_content('<div data-testid="card__seasonStatistics"><h3>Статистика сезона</h3></div>')
+        await self.page.evaluate('''() => setTimeout(()=>{
+            const card=document.querySelector('[data-testid]');
+            card.insertAdjacentHTML('beforeend', '<div><button aria-pressed="true">Итоги</button><button aria-pressed="false">За матч</button><button aria-pressed="false">Серия</button></div><div><button aria-pressed="true">Общее</button><button aria-pressed="false">Хозяева / Гости</button></div>');
+            for(const b of card.querySelectorAll('button')) b.onclick=()=>{
+                for(const s of b.parentElement.children) s.setAttribute('aria-pressed',String(s===b));
+            };
+        }, 1000)''')
+        snapshot, reason = await selected_snapshot(self.page, "card__seasonStatistics", SEASON_GROUPS,
+                                                   ("За матч", "Хозяева / Гости"), time.monotonic()+4)
+        self.assertIsNone(reason)
+        self.assertEqual(snapshot['selected'], ['За матч', 'Хозяева / Гости'])
+
+    async def test_delayed_switches_are_acknowledged_once_per_group(self):
+        groups = [["Забитые голы", "Пропущено"], ["Всего", "Хозяева", "Гости"], ["3", "6", "12", "Сезон"]]
+        html = '<div data-testid="card__scoringConceding">'
+        for group in groups:
+            html += '<div>' + ''.join(f'<button aria-pressed="{str(i==0).lower()}">{label}</button>'
+                                      for i, label in enumerate(group)) + '</div>'
+        await self.page.set_content(html + '<p>Данные источника</p></div>')
+        await self.page.evaluate('''() => {
+            window.clicks=[]; window.busy=false;
+            for(const b of document.querySelectorAll('button')) b.onclick=()=>{
+                window.clicks.push(b.innerText);
+                if(window.busy) return;
+                window.busy=true;
+                setTimeout(()=>{
+                    for(const s of b.parentElement.children) s.setAttribute('aria-pressed',String(s===b));
+                    window.busy=false;
+                }, 700);
+            };
+        }''')
+        snapshot, reason = await selected_snapshot(self.page, "card__scoringConceding", groups,
+                                                   ("Пропущено", "Гости", "Сезон"), time.monotonic()+5)
+        self.assertIsNone(reason)
+        self.assertEqual(snapshot['selected'], ['Пропущено', 'Гости', 'Сезон'])
+        self.assertEqual(await self.page.evaluate('window.clicks'), ['Пропущено', 'Гости', 'Сезон'])
+
+    async def test_filter_groups_ignore_unrelated_labels_and_hidden_responsive_cards(self):
+        value = json.loads(FIXTURE.read_text())
+        await self.page.set_content(value['season_html'])
+        await self.page.evaluate('''() => {
+            const card=document.querySelector('[data-testid="card__seasonStatistics"]');
+            const clone=card.cloneNode(true); clone.style.visibility='hidden'; card.after(clone);
+            const unrelated=document.createElement('div'); unrelated.innerHTML='<button>За матч</button>';
+            card.append(unrelated);
+            for(const b of card.querySelectorAll('button[aria-pressed]')) b.onclick=()=>{
+                for(const s of b.parentElement.children) s.setAttribute('aria-pressed',String(s===b));
+            };
+            [...card.querySelectorAll('button')].find(b=>b.innerText==='Хозяева / Гости').innerHTML='Хозяева /<br>Гости';
+        }''')
+        snapshot, reason = await selected_snapshot(self.page, "card__seasonStatistics", SEASON_GROUPS,
+                                                   ("За матч", "Хозяева / Гости"), time.monotonic()+3)
+        self.assertIsNone(reason)
+        self.assertEqual(snapshot['selected'], ['За матч', 'Хозяева / Гости'])
+
     async def test_real_form_card_percentages_and_scope_are_preserved(self):
         value = json.loads(FIXTURE.read_text())
         await self.page.set_content(value["form_html"])

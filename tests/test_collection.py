@@ -226,6 +226,32 @@ class CollectionTests(unittest.TestCase):
         self.assertEqual([e["source_event_id"] for e in picked], ["101"])
         self.assertEqual(candidates(self.source, "football", 5, self.stamp, event_id="999"), [])
 
+    def test_statistics_availability_prioritizes_details_without_guessing_identity(self):
+        self.data["events"].append({**self.data["events"][0], "id": 101, "idRadar": 0,
+                                    "date": (self.at + timedelta(hours=1)).isoformat()})
+        save_snapshot(self.db, self.capture, self.data, self.stamp)
+        picked = candidates(self.source, "football", 1, self.stamp)
+        self.assertEqual(picked[0]["source_event_id"], "100")
+        self.assertNotIn("statistics_url", picked[0])
+        picked = candidates(self.source, "football", 1, self.stamp,
+                            link_statuses={"100": "missing", "101": "found"})
+        self.assertEqual(picked[0]["source_event_id"], "101")
+        self.assertEqual(picked[0]["native_radar_id"], 0)
+        self.assertNotIn("statistics_url", picked[0])
+        picked = candidates(self.source, "football", 1, self.stamp, event_id="100",
+                            link_statuses={"100": "missing", "101": "found"})
+        self.assertEqual(picked[0]["source_event_id"], "100")
+
+    def test_recent_rich_events_leave_room_for_exploration_and_refresh_when_due(self):
+        self.data["events"].append({**self.data["events"][0], "id": 101, "idRadar": 0})
+        save_snapshot(self.db, self.capture, self.data, self.stamp)
+        attempts = {"100": self.stamp, "101": (self.at - timedelta(minutes=10)).isoformat()}
+        picked = candidates(self.source, "football", 1, self.stamp, attempts, link_statuses={"100": "found"})
+        self.assertEqual(picked[0]["source_event_id"], "101")
+        later = (self.at + timedelta(minutes=31)).isoformat()
+        picked = candidates(self.source, "football", 1, later, attempts, link_statuses={"100": "found"})
+        self.assertEqual(picked[0]["source_event_id"], "100")
+
     def test_partial_source_failure_still_collects_fresh_details(self):
         from collector.live import cycle
         state = self.folder / "partial"
