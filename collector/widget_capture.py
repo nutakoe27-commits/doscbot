@@ -88,7 +88,7 @@ class WidgetCapture:
                     or source.username or source.password or request.resource_type not in ("xhr", "fetch")):
                 return
             self.summary["responses"] += 1
-            if response.status in (401, 403, 429) and len(self.summary["http_errors"]) < 10:
+            if response.status >= 400 and len(self.summary["http_errors"]) < 10:
                 self.summary["http_errors"].append({**endpoint(response.url), "status": response.status})
             if len(self.pending) >= 16 or len(self.records) + len(self.pending) >= self.max_records:
                 self.skip("record_limit")
@@ -142,7 +142,7 @@ class WidgetCapture:
             for task in pending:
                 task.cancel()
             await asyncio.gather(*tasks, return_exceptions=True)
-        incomplete = self.summary["truncated"] or any(
+        incomplete = self.summary["truncated"] or bool(self.summary["http_errors"]) or any(
             key != "not_json" for key in self.summary["skipped"])
         self.summary["state"] = "partial" if incomplete else "captured" if self.records else "no_json_observed"
         return self.records, self.summary

@@ -59,6 +59,15 @@ class WidgetCaptureTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(summary["state"], "partial")
         self.assertEqual(summary["skipped"]["response_size"], 1)
 
+    async def test_failed_source_response_cannot_be_reported_as_complete(self):
+        page = SimpleNamespace(on=lambda *args: None, remove_listener=lambda *args: None)
+        capture = WidgetCapture(page, "75512542")
+        capture.on_response(response({"error": "temporarily unavailable"}, status=503))
+        records, summary = await capture.finish()
+        self.assertEqual(len(records), 1)
+        self.assertEqual(summary["state"], "partial")
+        self.assertEqual(summary["http_errors"][0]["status"], 503)
+
 
 class BrowserProbeTests(unittest.IsolatedAsyncioTestCase):
     async def test_probe_preserves_app_responses_and_captures_public_json_and_dom(self):
