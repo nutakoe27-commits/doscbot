@@ -59,6 +59,16 @@ def main(argv=None):
     refit.add_argument('--output',type=Path,required=True)
     refit.add_argument('--threads',type=int,default=2)
     refit.add_argument('--max-rows',type=int,default=200000)
+    for command,help_text in (('evaluate-model','Temporal retrospective holdout after model training'),
+                              ('predict-model','Freeze forecasts for unseen upcoming matches')):
+        evaluation=commands.add_parser(command,help=help_text)
+        evaluation.add_argument('--model',type=Path,required=True)
+        evaluation.add_argument('--output',type=Path,required=True)
+        evaluation.add_argument('--threads',type=int,default=2)
+        evaluation.add_argument('--max-samples',type=int,default=200000)
+    scoring=commands.add_parser('score-predictions',help='Score frozen prospective forecasts using a newer own snapshot')
+    scoring.add_argument('--predictions',type=Path,required=True)
+    scoring.add_argument('--output',type=Path,required=True)
     monitor = commands.add_parser("monitor", help="Read-only live terminal dashboard; runs alongside the collector")
     monitor.add_argument("--once", action="store_true", help="Print one snapshot without interactive screen")
     monitor.add_argument("--refresh", type=float, default=2, help="Refresh interval, seconds (0.5..60)")
@@ -89,6 +99,15 @@ def main(argv=None):
     collect.add_argument("--chromium", default=os.environ.get("CHROMIUM_EXECUTABLE") or
                         shutil.which("chromium") or shutil.which("chromium-browser"))
     args = parser.parse_args(argv)
+    if args.command in ('evaluate-model','predict-model'):
+        from .model_evaluation import make_forecasts
+        result=make_forecasts(args.state_dir,args.finding,args.model,args.output,
+                              retrospective=args.command=='evaluate-model',threads=args.threads,max_samples=args.max_samples)
+        print(json.dumps(result,ensure_ascii=False,indent=2));return 0
+    if args.command=='score-predictions':
+        from .model_evaluation import score_forecasts
+        result=score_forecasts(args.state_dir,args.finding,args.predictions,args.output)
+        print(json.dumps(result,ensure_ascii=False,indent=2));return 0
     if args.command=='train-all':
         from .train_all import train_all
         result=train_all(args.dataset,args.finding,args.reference_model,args.output,
