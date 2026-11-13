@@ -8,6 +8,7 @@ import math
 from pathlib import Path
 import re
 import shutil
+from zoneinfo import ZoneInfo
 
 from .monitor_data import readonly
 from .outcomes import name_key
@@ -264,6 +265,7 @@ def prepare_training(state, finding, *, output=None, lead_minutes=60, sports=DEF
                 for name in ('training','profiles','store','outcomes','monitor_data')}),
             'valid_from':valid_from,'test_from':test_from,'structurally_ready':False,'sports':{},'rejected':{},'output':None,
             'requested_sports':list(selected),
+            'coverage_timezone':'Europe/Moscow',
             'scope':'First normal-period win baseline; no bookmaker settlement or betting profit claim'}
     if not path.is_file():
         report['reason']='database_missing';return report
@@ -307,9 +309,19 @@ def prepare_training(state, finding, *, output=None, lead_minutes=60, sports=DEF
                 winner,label_reason,result=linked_label(db,event,widget,market,min(cutoff,current))
                 sides=list(participant_rows(payload,market))
                 if count:
-                    item=report['sports'].setdefault(event['sport'],{'events':0,'rows':0,'labelled_rows':0,'full':0,'partial':0,
-                        'partitions':{},'label_reasons':{},'market_reasons':{},'train_classes':{}})
-                    item['events']+=1;item['rows']+=2;item['labelled_rows']+=2 if winner else 0
+                    item=report['sports'].setdefault(event['sport'],{'events':0,'rows':0,'labelled_rows':0,'labelled_events':0,'full':0,'partial':0,
+                        'partitions':{},'label_reasons':{},'market_reasons':{},'train_classes':{},'labelled_hours_moscow':{},
+                        'kickoff_first_utc':None,'kickoff_last_utc':None,'labelled_kickoff_first_utc':None,'labelled_kickoff_last_utc':None})
+                    item['events']+=1;item['rows']+=2;item['labelled_rows']+=2 if winner else 0;item['labelled_events']+=int(winner is not None)
+                    kickoff=instant(row['kickoff_at'])
+                    for prefix in ('kickoff', 'labelled_kickoff') if winner else ('kickoff',):
+                        for boundary in ('first','last'):
+                            key=prefix+'_'+boundary+'_utc';previous=item[key]
+                            if previous is None or (kickoff<instant(previous) if boundary=='first' else kickoff>instant(previous)):
+                                item[key]=kickoff.isoformat()
+                    if winner:
+                        hour=kickoff.astimezone(ZoneInfo('Europe/Moscow')).replace(minute=0,second=0,microsecond=0).isoformat()
+                        item['labelled_hours_moscow'][hour]=item['labelled_hours_moscow'].get(hour,0)+1
                     item['full' if widget.get('views',{}).get('state')=='captured' else 'partial']+=1
                     item['partitions'][split]=item['partitions'].get(split,0)+(2 if winner else 0)
                     if label_reason:item['label_reasons'][label_reason]=item['label_reasons'].get(label_reason,0)+1
@@ -341,6 +353,7 @@ def prepare_training(state, finding, *, output=None, lead_minutes=60, sports=DEF
                             'max_observation_id':db.execute('SELECT max(id) FROM observations').fetchone()[0]}
         for _ in records(db,True):pass
         report['eligible_events']=sum(item['events'] for item in report['sports'].values())
+        report['labelled_events']=sum(item['labelled_events'] for item in report['sports'].values())
         report['without_horizon_sample']=report['sample_events']-report['eligible_events']-sum(report['rejected'].values())
         blockers=[] if valid else ['time_boundaries_missing']
         if valid:

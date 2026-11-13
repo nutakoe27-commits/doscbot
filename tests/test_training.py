@@ -95,7 +95,11 @@ class TrainingPreparationTests(unittest.TestCase):
         before=(self.state/'dataset.sqlite3').read_bytes();output=self.root/'prepared'
         report=prepare_training(self.state,self.finding,output=output)
         self.assertEqual(report['eligible_events'],5)
+        self.assertEqual(report['labelled_events'],5)
         self.assertEqual(sum(item['labelled_rows'] for item in report['sports'].values()),10)
+        self.assertTrue(all(item['labelled_events']==1 and sum(item['labelled_hours_moscow'].values())==1
+                            and item['labelled_kickoff_first_utc']==self.base.isoformat() for item in report['sports'].values()))
+        self.assertEqual(report['coverage_timezone'],'Europe/Moscow')
         self.assertEqual(report['sports']['tennis']['partial'],1)
         self.assertFalse(report['structurally_ready'])
         self.assertTrue(report['split_required'])
