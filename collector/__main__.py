@@ -42,6 +42,15 @@ def main(argv=None):
     training.add_argument('--lead-minutes',type=int,default=60)
     training.add_argument('--valid-from',help='Timezone-aware validation boundary, e.g. 2026-12-01T00:00:00Z')
     training.add_argument('--test-from',help='Timezone-aware test boundary; all rows of an event stay together')
+    snapshot=commands.add_parser('training-snapshot',help='Consistent standalone SQLite copy for another server; collection can continue')
+    snapshot.add_argument('--output',type=Path,required=True,help='New directory outside collector data')
+    fit=commands.add_parser('train-baseline',help='Experimental CPU CatBoost on a verified temporal training export')
+    fit.add_argument('--dataset',type=Path,required=True)
+    fit.add_argument('--output',type=Path,required=True)
+    fit.add_argument('--threads',type=int,default=2)
+    fit.add_argument('--iterations',type=int,default=400)
+    fit.add_argument('--depth',type=int,default=5)
+    fit.add_argument('--max-rows',type=int,default=200000)
     monitor = commands.add_parser("monitor", help="Read-only live terminal dashboard; runs alongside the collector")
     monitor.add_argument("--once", action="store_true", help="Print one snapshot without interactive screen")
     monitor.add_argument("--refresh", type=float, default=2, help="Refresh interval, seconds (0.5..60)")
@@ -72,6 +81,17 @@ def main(argv=None):
     collect.add_argument("--chromium", default=os.environ.get("CHROMIUM_EXECUTABLE") or
                         shutil.which("chromium") or shutil.which("chromium-browser"))
     args = parser.parse_args(argv)
+    if args.command=='train-baseline':
+        from .train_baseline import train_baseline
+        result=train_baseline(args.dataset,args.finding,args.output,threads=args.threads,
+                              iterations=args.iterations,depth=args.depth,max_rows=args.max_rows)
+        print(json.dumps(result,ensure_ascii=False,indent=2))
+        return 0
+    if args.command=='training-snapshot':
+        from .snapshot import training_snapshot
+        result=training_snapshot(args.state_dir,args.finding,args.output)
+        print(json.dumps(result,ensure_ascii=False,indent=2))
+        return 0
     if args.command=='prepare-training':
         from .training import prepare_training
         result=prepare_training(args.state_dir,args.finding,output=args.output,sports=args.sport,

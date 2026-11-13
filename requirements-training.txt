@@ -1,0 +1,2 @@
+# Training-only environment. The collector's browser dependencies are separate.
+catboost==1.2.10

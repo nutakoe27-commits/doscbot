@@ -263,6 +263,7 @@ def prepare_training(state, finding, *, output=None, lead_minutes=60, sports=DEF
             'preparation_code_sha256':digest({name:hashlib.sha256(Path(__file__).with_name(name+'.py').read_bytes()).hexdigest()
                 for name in ('training','profiles','store','outcomes','monitor_data')}),
             'valid_from':valid_from,'test_from':test_from,'structurally_ready':False,'sports':{},'rejected':{},'output':None,
+            'requested_sports':list(selected),
             'scope':'First normal-period win baseline; no bookmaker settlement or betting profit claim'}
     if not path.is_file():
         report['reason']='database_missing';return report
