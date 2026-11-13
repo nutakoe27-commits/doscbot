@@ -18,6 +18,23 @@ SCORES={'football':'1:2 (0:0 1:2)', 'basketball':'99:79 (15:25 27:15 30:23 27:16
 
 
 class ScoreContractTests(unittest.TestCase):
+    def test_real_tennis_and_volleyball_generic_match_format_survives_detailed_null(self):
+        for sport,statistics_id,bestof,score in (
+            ('tennis',76430184,3,'2:1 (7:6 6:7 6:3)'),
+            ('volleyball',75899080,5,'3:1 (25:20 23:25 25:13 25:18)')):
+            widget={'statistics_id':str(statistics_id),'match':{'status':{'_id':0},'best_of':None},'documents':[
+                {'name':'match_info_statshub','fields':[{'path':'match._id','value':statistics_id},
+                    {'path':'match.numberofperiods','value':None}]},
+                {'name':'stats_match_get','fields':[{'path':'_id','value':statistics_id},{'path':'bestof','value':bestof}]}]}
+            with self.subTest(sport=sport):
+                self.assertEqual(score_winner(sport,score,widget),('home',None))
+                wrong=copy.deepcopy(widget);wrong['documents'][1]['fields'][0]['value']=999
+                self.assertEqual(score_winner(sport,score,wrong)[1],'best_of_unconfirmed')
+                conflict=copy.deepcopy(widget);conflict['match']['best_of']=5 if bestof==3 else 3
+                self.assertEqual(score_winner(sport,score,conflict)[1],'best_of_unconfirmed')
+                started=copy.deepcopy(widget);started['documents'][1]['fields'].append({'path':'result.home','value':0})
+                self.assertEqual(score_winner(sport,score,started)[1],'best_of_unconfirmed')
+
     def test_real_prematch_planned_period_count_can_supply_volleyball_format(self):
         widget={'statistics_id':'75208592','match':{'status':{'_id':0},'result':{'home':None,'away':None}},
                 'documents':[{'name':'match_info_statshub','fields':[{'path':'match._id','value':75208592},
@@ -106,6 +123,108 @@ class TrainingPreparationTests(unittest.TestCase):
 
     def read_rows(self,output):
         return [json.loads(line) for line in (output/'rows.jsonl').read_text().splitlines()]
+
+    def edit_sample(self,identifier,edit):
+        with closing(self.store.connect()) as db,db:
+            row=db.execute('SELECT id,payload FROM samples WHERE event_id=?',(identifier,)).fetchone()
+            value=json.loads(row['payload']);edit(value)
+            db.execute('UPDATE samples SET payload=?,sha256=? WHERE id=?',(encoded(value),digest(value),row['id']))
+
+    def observe_at(self,kind,identifier,at,value):
+        with patch('collector.store.now',return_value=at.isoformat()):
+            self.store.observation(kind,identifier,at.isoformat(),value)
+
+    def test_display_hyphen_variants_do_not_relax_other_participant_identity(self):
+        for identifier in ('1','2','3','4'):
+            _,_,_,outcome=self.sample(identifier,'volleyball',with_result=False)
+            def edit(value):
+                value['event'].update(home='Динамо Москва (ж)',away='Уралочка\u2011НТМК Екатеринбург (ж)')
+                if identifier=='4':value['event']['home']='Уралочка-НТМК Екатеринбург (ж)'
+            self.edit_sample(identifier,edit)
+            outcome={'format':'doscbot.event-outcome.v1','event_id':identifier,'sport_id':23,
+                     'home':'Динамо Москва (ж)','away':'Уралочка-НТМК Екатеринбург (ж)',
+                     'kickoff_at':self.base.isoformat(),'method':'sport_radar_names_time','score_text':SCORES['volleyball']}
+            if identifier=='2':outcome['home'],outcome['away']=outcome['away'],outcome['home']
+            if identifier=='3':outcome['away']='Уралочка-НТМК Екатеринбург (м)'
+            self.outcome(identifier,outcome,self.base+timedelta(hours=3))
+        output=self.root/'hyphens';report=prepare_training(self.state,self.finding,sports='volleyball',output=output)
+        self.assertEqual(report['labelled_events'],1)
+        self.assertEqual(report['sports']['volleyball']['label_reasons'],{'outcome_identity_unconfirmed':2})
+        self.assertEqual(report['rejected'],{'participant_identity_missing':1})
+        self.assertEqual({r['event_group'] for r in self.read_rows(output) if r['target'] is not None},{'1'})
+
+    def test_delayed_tennis_identity_needs_before_and_after_native_evidence_available_with_result(self):
+        for index,variant in enumerate(('valid','wrong_radar','wrong_members','late_update','missing_before','earlier_start')):
+            identifier=str(17144004+index);statistics_id=str(76417326+index)
+            self.sample(identifier,'tennis',with_result=False)
+            def edit(value):
+                value['event'].update(home='Мартинес\u00a0П.',away='Мартино\u00a0М.')
+                value['widget_data']['statistics_id']=statistics_id
+                value['team_statistics']['statistics_id']=statistics_id
+            self.edit_sample(identifier,edit)
+            before={'id':int(identifier),'idSport':5,'idRadar':int(statistics_id),
+                    'date':(self.base+timedelta(milliseconds=999)).isoformat(),'members':['Мартинес П.','Мартино М.']}
+            if variant!='missing_before':self.observe_at('event',identifier,self.base-timedelta(minutes=61),before)
+            revised=self.base+timedelta(minutes=-20 if variant=='earlier_start' else 20)
+            after={**before,'date':revised.isoformat()}
+            if variant=='wrong_radar':after['idRadar']=999
+            if variant=='wrong_members':after['members'].reverse()
+            at=self.base+timedelta(hours=4) if variant=='late_update' else self.base+timedelta(minutes=5)
+            self.observe_at('event',identifier,at,after)
+            outcome={'format':'doscbot.event-outcome.v1','event_id':identifier,'sport_id':5,'radar_id':int(statistics_id),
+                'home':'Мартинес П.','away':'Мартино М.','kickoff_at':revised.isoformat(),
+                'method':'sport_radar_names_time','score_text':'2:0 (6:3 6:2)'}
+            self.outcome(identifier,outcome,self.base+timedelta(hours=3))
+        output=self.root/'delayed';before=(self.state/'dataset.sqlite3').read_bytes()
+        report=prepare_training(self.state,self.finding,sports='tennis',output=output)
+        self.assertEqual(report['labelled_events'],1)
+        self.assertEqual(report['sports']['tennis']['label_reasons'],{'outcome_identity_unconfirmed':5})
+        self.assertEqual(report['sports']['tennis']['label_evidence'],{'identity_evidence':1})
+        labelled=[r for r in self.read_rows(output) if r['target'] is not None]
+        self.assertEqual({r['event_group'] for r in labelled},{'17144004'})
+        self.assertEqual({r['kickoff_at'] for r in labelled},{self.base.isoformat()})
+        self.assertEqual({r['features']['lead_minutes'] for r in labelled},{60})
+        self.assertEqual(labelled[0]['result']['identity_evidence']['method'],'observed_schedule_revision')
+        self.assertEqual((self.state/'dataset.sqlite3').read_bytes(),before)
+
+    def test_only_same_capture_prematch_raw_format_can_recover_a_truncated_projection(self):
+        variants=('valid','other_capture','late_receipt','wrong_uid','wrong_sport','corrupt','started','later_history','truncated','error_response')
+        for index,variant in enumerate(variants):
+            identifier=str(index+1);statistics_id='100'+identifier
+            self.sample(identifier,'tennis')
+            def edit(value):
+                widget=value['widget_data'];widget['match'].update(best_of=None,home={'id':'256875'},away={'id':'371436'})
+                widget['capture_id']='capture-'+identifier
+            self.edit_sample(identifier,edit)
+            match={'_id':int(statistics_id),'_sid':5,'bestof':3,'status':None,
+                   'teams':{'home':{'uid':256875},'away':{'uid':371436}},
+                   'result':{'home':None,'away':None,'winner':None},'retired':False,'walkover':False}
+            if variant=='wrong_uid':match['teams']['away']['uid']=999
+            if variant=='wrong_sport':match['_sid']=23
+            if variant=='started':match['result']['home']=0
+            route='stats_player_lastx' if variant=='later_history' else 'stats_match_get'
+            observed=self.base-timedelta(minutes=61)
+            packet={'format':'doscbot.widget-json.v1','binding':'observed_event_link','statistics_id':statistics_id,
+                    'capture_id':'different' if variant=='other_capture' else 'capture-'+identifier,
+                    'http_status':500 if variant=='error_response' else 200,'truncated':variant=='truncated',
+                    'observed_at':observed.isoformat(),
+                    'endpoint':{'path':'/winline/ru/Etc:UTC/gismo/'+route+'/'+statistics_id},
+                    'data':{'doc':[{'data':{'matches':[match]} if variant=='later_history' else match}]}}
+            received=self.base-timedelta(minutes=59 if variant=='late_receipt' else 61)
+            with patch('collector.store.now',return_value=received.isoformat()):
+                self.store.observation('widget_json',identifier,observed.isoformat(),packet)
+            if variant=='corrupt':
+                with closing(self.store.connect()) as db,db:
+                    db.execute("UPDATE observations SET sha256=? WHERE kind='widget_json' AND entity_id=?",('0'*64,identifier))
+        before=(self.state/'dataset.sqlite3').read_bytes();output=self.root/'raw-format'
+        report=prepare_training(self.state,self.finding,sports='tennis',output=output)
+        rows=self.read_rows(output);labelled=[r for r in rows if r['target'] is not None]
+        self.assertEqual(report['labelled_events'],1)
+        self.assertEqual({r['event_group'] for r in labelled},{'1'})
+        self.assertEqual(report['sports']['tennis']['label_evidence'],{'format_evidence':1})
+        self.assertTrue(labelled[0]['result']['format_evidence'])
+        self.assertNotIn('format_evidence',labelled[0]['features'])
+        self.assertEqual((self.state/'dataset.sqlite3').read_bytes(),before)
 
     def test_five_sports_full_and_partial_inputs_export_without_modifying_database(self):
         for index,sport in enumerate(SCORES):self.sample(str(index),sport,state='partial' if sport=='tennis' else 'captured')

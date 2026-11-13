@@ -11,9 +11,9 @@ import shutil
 from zoneinfo import ZoneInfo
 
 from .monitor_data import readonly
-from .outcomes import name_key
 from .profiles import DEFAULT_SPORTS, PROFILES, selection
 from .store import check_observation_times, digest, encoded, instant, now, sample_blocker, widget_blocker
+from .training_evidence import frozen_format_documents, participant_key, schedule_revision
 
 
 # Native ResultService identities verified from the user's five raw examples.
@@ -137,14 +137,19 @@ def best_of(widget):
     add(target.get('best_of'))
     if planned:add(target.get('number_of_periods'))
     for document in widget.get('documents',[]):
-        if document.get('name')!='match_info_statshub':continue
+        if document.get('name') not in ('match_info_statshub','stats_match_get'):continue
+        prefix='match.' if document['name']=='match_info_statshub' else ''
         fields={item.get('path'):item.get('value') for item in document.get('fields',[])}
-        if str(fields.get('match._id'))!=str(widget.get('statistics_id')):continue
-        add(fields.get('match.bestof'))
+        if str(fields.get(prefix+'_id'))!=str(widget.get('statistics_id')):continue
+        status=fields.get(prefix+'status._id',fields.get(prefix+'status'))
+        if (isinstance(status,bool) or status not in (None,0,'0') or any(fields.get(prefix+'result.'+key) is not None for key in ('home','away','winner')) or
+                any(fields.get(prefix+key) is True for key in ('retired','walkover','disqualified','canceled','postponed'))):
+            add('__source_not_prematch__');continue
+        add(fields.get(prefix+'bestof'))
         # StatsHub also declares the planned set count here. Use it only from
         # a confirmed not-started, scoreless target; played periods are not a
         # substitute for the scheduled match format.
-        if planned:add(fields.get('match.numberofperiods'))
+        if planned:add(fields.get(prefix+'numberofperiods'))
     value=next(iter(values)) if len(values)==1 else None
     return int(value) if value in (3,5) else None
 
@@ -189,7 +194,7 @@ def score_winner(sport, score, widget):
     return 'home' if main[0]>main[1] else 'away' if main[1]>main[0] else 'draw',None
 
 
-def linked_label(db, event, widget, market, cutoff):
+def linked_label(db, event, widget, market, cutoff, *, as_of):
     result=db.execute("SELECT id,received_at,sha256,payload FROM observations WHERE kind='event_outcome' AND entity_id=? "
                       "AND julianday(received_at)<=julianday(?) ORDER BY julianday(received_at) DESC,id DESC LIMIT 1",
                       (event['source_event_id'],cutoff.isoformat())).fetchone()
@@ -203,11 +208,15 @@ def linked_label(db, event, widget, market, cutoff):
     try:
         if (value.get('format')!='doscbot.event-outcome.v1' or str(value.get('event_id'))!=event['source_event_id'] or
             isinstance(value.get('sport_id'),bool) or NATIVE_SPORTS.get(value.get('sport_id'))!=event['sport'] or
-            [name_key(value.get(side)) for side in ('home','away')]!=[name_key(event.get(side)) for side in ('home','away')] or
-            abs((instant(value['kickoff_at'])-instant(event['kickoff_at'])).total_seconds())>900 or
+            [participant_key(value.get(side)) for side in ('home','away')]!=[participant_key(event.get(side)) for side in ('home','away')] or
             instant(result['received_at'])<instant(event['kickoff_at']) or
+            instant(result['received_at'])<instant(value['kickoff_at']) or
             value.get('method') not in ('sport_radar_names_time','sport_names_time_unique')):
             return None,'outcome_identity_unconfirmed',context
+        if abs((instant(value['kickoff_at'])-instant(event['kickoff_at'])).total_seconds())>900:
+            revision=schedule_revision(db,event,widget,value,as_of,result['received_at'])
+            if not revision:return None,'outcome_identity_unconfirmed',context
+            context['identity_evidence']=revision
     except (KeyError,TypeError,ValueError):
         return None,'outcome_identity_unconfirmed',context
     if not market:
@@ -216,6 +225,13 @@ def linked_label(db, event, widget, market, cutoff):
             (event['sport'] in ('football','hockey') and market['scope']=='match' and 'draw' in market['prices'])):
         return None,'market_scope_unverified',context
     outcome,reason=score_winner(event['sport'],value.get('score_text'),widget)
+    if event['sport'] in ('tennis','volleyball') and reason in (None,'best_of_unconfirmed'):
+        documents,provenance,error=frozen_format_documents(db,event,widget,as_of)
+        if error:return None,error,context
+        if documents:
+            label_widget={**widget,'documents':widget.get('documents',[])+documents}
+            outcome,reason=score_winner(event['sport'],value.get('score_text'),label_widget)
+            context['format_evidence']=provenance
     if reason:
         return None,reason,context
     if outcome=='draw' and 'draw' not in market['prices']:
@@ -275,7 +291,7 @@ def prepare_training(state, finding, *, output=None, lead_minutes=60, sports=DEF
     report={'format':'doscbot.training-readiness.v1','checked_at':checked,'database':str(path),
             'target':'participant_win.v1','lead_minutes':lead_minutes,'schema_sha256':digest(SCHEMA),
             'preparation_code_sha256':digest({name:hashlib.sha256(Path(__file__).with_name(name+'.py').read_bytes()).hexdigest()
-                for name in ('training','training_diagnostics','profiles','store','outcomes','monitor_data')}),
+                for name in ('training','training_evidence','training_diagnostics','profiles','store','outcomes','monitor_data')}),
             'valid_from':valid_from,'test_from':test_from,'structurally_ready':False,'sports':{},'rejected':{},'output':None,
             'requested_sports':list(selected),
             'coverage_timezone':'Europe/Moscow',
@@ -312,7 +328,7 @@ def prepare_training(state, finding, *, output=None, lead_minutes=60, sports=DEF
                 if reason:
                     rejected[reason]+=1;continue
                 check_observation_times(payload,instant(row['as_of']))
-                if not all(name_key(event.get(side)) for side in ('home','away')) or name_key(event.get('home'))==name_key(event.get('away')):
+                if not all(participant_key(event.get(side)) for side in ('home','away')) or participant_key(event.get('home'))==participant_key(event.get('away')):
                     reason='participant_identity_missing'
                 if any((widget.get('match') or {}).get(flag) is True for flag in ('cancelled','postponed','retired','walkover','disqualified')):
                     reason='target_unavailable'
@@ -323,11 +339,11 @@ def prepare_training(state, finding, *, output=None, lead_minutes=60, sports=DEF
                     rejected[reason]+=1;continue
                 split,cutoff=partition(instant(row['kickoff_at']))
                 market,market_reason=winner_market(event)
-                winner,label_reason,result=linked_label(db,event,widget,market,min(cutoff,current))
+                winner,label_reason,result=linked_label(db,event,widget,market,min(cutoff,current),as_of=row['as_of'])
                 sides=list(participant_rows(payload,market))
                 if count:
                     item=report['sports'].setdefault(event['sport'],{'events':0,'rows':0,'labelled_rows':0,'labelled_events':0,'full':0,'partial':0,
-                        'partitions':{},'label_reasons':{},'market_reasons':{},'train_classes':{},'labelled_hours_moscow':{},
+                        'partitions':{},'label_reasons':{},'market_reasons':{},'label_evidence':{},'train_classes':{},'labelled_hours_moscow':{},
                         'kickoff_first_utc':None,'kickoff_last_utc':None,'labelled_kickoff_first_utc':None,'labelled_kickoff_last_utc':None})
                     item['events']+=1;item['rows']+=2;item['labelled_rows']+=2 if winner else 0;item['labelled_events']+=int(winner is not None)
                     kickoff=instant(row['kickoff_at'])
@@ -343,6 +359,9 @@ def prepare_training(state, finding, *, output=None, lead_minutes=60, sports=DEF
                     item['partitions'][split]=item['partitions'].get(split,0)+(2 if winner else 0)
                     if label_reason:item['label_reasons'][label_reason]=item['label_reasons'].get(label_reason,0)+1
                     if market_reason:item['market_reasons'][market_reason]=item['market_reasons'].get(market_reason,0)+1
+                    if winner:
+                        for key in ('identity_evidence','format_evidence'):
+                            if result.get(key):item['label_evidence'][key]=item['label_evidence'].get(key,0)+1
                     if (diagnostic_examples and label_reason and label_reason!='result_not_available_at_cutoff' and
                             len(diagnostics)<20 and diagnostic_counts[event['sport'],label_reason]<diagnostic_examples):
                         from .training_diagnostics import example
