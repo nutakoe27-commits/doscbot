@@ -91,9 +91,10 @@ class WidgetDataTests(unittest.TestCase):
         records=copy.deepcopy(self.fixture['records'])
         for record in records:
             if 'match_info_statshub' in record.get('endpoint',{}).get('path',''):
-                record['data']['doc'][0]['data']['match'].update(bestof=3,retired=False,walkover=False,disqualified=False)
+                record['data']['doc'][0]['data']['match'].update(bestof=3,numberofperiods=3,retired=False,walkover=False,disqualified=False)
         value=normalize_widget(records,'68932518')
         self.assertEqual(value['match']['best_of'],3)
+        self.assertEqual(value['match']['number_of_periods'],3)
         self.assertIs(value['match']['retired'],False)
         self.assertIs(value['match']['walkover'],False)
         self.assertIs(value['match']['disqualified'],False)

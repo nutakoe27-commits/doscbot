@@ -126,17 +126,27 @@ def side_statistics(widget, side, cutoff):
 
 
 def best_of(widget):
-    value=(widget.get('match') or {}).get('best_of')
-    if isinstance(value,(int,float)) and value in (3,5) and not isinstance(value,bool):
-        return int(value)
+    target=widget.get('match') or {}
+    status=target.get('status')
+    status=status.get('_id') if isinstance(status,dict) else status
+    planned=type(status) is int and status==0 and all((target.get('result') or {}).get(side) is None for side in ('home','away'))
     values=set()
+    def add(value):
+        if value is not None:
+            values.add(value if isinstance(value,(int,float)) and not isinstance(value,bool) else '__invalid__')
+    add(target.get('best_of'))
+    if planned:add(target.get('number_of_periods'))
     for document in widget.get('documents',[]):
         if document.get('name')!='match_info_statshub':continue
         fields={item.get('path'):item.get('value') for item in document.get('fields',[])}
         if str(fields.get('match._id'))!=str(widget.get('statistics_id')):continue
-        value=fields.get('match.bestof')
-        if isinstance(value,(int,float)) and not isinstance(value,bool):values.add(value)
-    return int(next(iter(values))) if len(values)==1 and next(iter(values)) in (3,5) else None
+        add(fields.get('match.bestof'))
+        # StatsHub also declares the planned set count here. Use it only from
+        # a confirmed not-started, scoreless target; played periods are not a
+        # substitute for the scheduled match format.
+        if planned:add(fields.get('match.numberofperiods'))
+    value=next(iter(values)) if len(values)==1 else None
+    return int(value) if value in (3,5) else None
 
 
 def score_winner(sport, score, widget):
@@ -241,12 +251,15 @@ def participant_rows(payload, market):
         yield side,features
 
 
-def prepare_training(state, finding, *, output=None, lead_minutes=60, sports=DEFAULT_SPORTS,valid_from=None,test_from=None):
+def prepare_training(state, finding, *, output=None, lead_minutes=60, sports=DEFAULT_SPORTS,valid_from=None,test_from=None,
+                     diagnostic_examples=0):
     state,finding=Path(state).resolve(),Path(finding).resolve()
     if state==finding or finding in state.parents or state in finding.parents:
         raise ValueError('Training preparation only uses the new collector state outside finding')
     if not 0<=lead_minutes<=10080:
         raise ValueError('lead-minutes must be between 0 and 10080')
+    if type(diagnostic_examples) is not int or not 0<=diagnostic_examples<=3:
+        raise ValueError('diagnostic-examples must be between 0 and 3')
     if bool(valid_from)!=bool(test_from):
         raise ValueError('Provide both valid-from and test-from, or neither')
     valid,test=instant(valid_from) if valid_from else None,instant(test_from) if test_from else None
@@ -262,13 +275,17 @@ def prepare_training(state, finding, *, output=None, lead_minutes=60, sports=DEF
     report={'format':'doscbot.training-readiness.v1','checked_at':checked,'database':str(path),
             'target':'participant_win.v1','lead_minutes':lead_minutes,'schema_sha256':digest(SCHEMA),
             'preparation_code_sha256':digest({name:hashlib.sha256(Path(__file__).with_name(name+'.py').read_bytes()).hexdigest()
-                for name in ('training','profiles','store','outcomes','monitor_data')}),
+                for name in ('training','training_diagnostics','profiles','store','outcomes','monitor_data')}),
             'valid_from':valid_from,'test_from':test_from,'structurally_ready':False,'sports':{},'rejected':{},'output':None,
             'requested_sports':list(selected),
             'coverage_timezone':'Europe/Moscow',
             'scope':'First normal-period win baseline; no bookmaker settlement or betting profit claim'}
     if not path.is_file():
         report['reason']='database_missing';return report
+    diagnostics=[];diagnostic_counts=Counter()
+    if diagnostic_examples:
+        report['diagnostics']={'limit_per_sport_reason':diagnostic_examples,'limit_total':20,'examples':diagnostics,
+                               'scope':'Saved source evidence only; diagnostics never supply labels or features'}
     target=Path(output).expanduser().resolve() if output else None
     if target and (target==finding or finding in target.parents or target==state or state in target.parents):
         raise ValueError('Export outside finding and collector data to protect source databases')
@@ -326,6 +343,14 @@ def prepare_training(state, finding, *, output=None, lead_minutes=60, sports=DEF
                     item['partitions'][split]=item['partitions'].get(split,0)+(2 if winner else 0)
                     if label_reason:item['label_reasons'][label_reason]=item['label_reasons'].get(label_reason,0)+1
                     if market_reason:item['market_reasons'][market_reason]=item['market_reasons'].get(market_reason,0)+1
+                    if (diagnostic_examples and label_reason and label_reason!='result_not_available_at_cutoff' and
+                            len(diagnostics)<20 and diagnostic_counts[event['sport'],label_reason]<diagnostic_examples):
+                        from .training_diagnostics import example
+                        try:
+                            diagnostics.append(example(db,row,payload,label_reason,result,min(cutoff,current)))
+                            diagnostic_counts[event['sport'],label_reason]+=1
+                        except (KeyError,TypeError,ValueError,AttributeError):
+                            report['diagnostics']['unreadable_examples']=report['diagnostics'].get('unreadable_examples',0)+1
                     if winner and split=='train':
                         for side,_ in sides:
                             label=str(int(winner==side));item['train_classes'][label]=item['train_classes'].get(label,0)+1
@@ -352,6 +377,9 @@ def prepare_training(state, finding, *, output=None, lead_minutes=60, sports=DEF
         report['snapshot']={'max_sample_id':db.execute('SELECT max(id) FROM samples').fetchone()[0],
                             'max_observation_id':db.execute('SELECT max(id) FROM observations').fetchone()[0]}
         for _ in records(db,True):pass
+        if diagnostics:
+            from .training_diagnostics import saved_context
+            saved_context(db,diagnostics)
         report['eligible_events']=sum(item['events'] for item in report['sports'].values())
         report['labelled_events']=sum(item['labelled_events'] for item in report['sports'].values())
         report['without_horizon_sample']=report['sample_events']-report['eligible_events']-sum(report['rejected'].values())

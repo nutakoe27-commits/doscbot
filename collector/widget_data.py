@@ -40,6 +40,7 @@ def match(value):
             "status": value.get("status"), "result": value.get("result"),
             "periods": value.get("periods"), "postponed": value.get("postponed"),
             "best_of": value.get("bestof"), "retired": value.get("retired"),
+            "number_of_periods": value.get("numberofperiods"),
             "walkover": value.get("walkover"), "disqualified": value.get("disqualified"),
             "cancelled": value.get("cancelled", value.get("canceled"))}
 

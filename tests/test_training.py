@@ -18,6 +18,23 @@ SCORES={'football':'1:2 (0:0 1:2)', 'basketball':'99:79 (15:25 27:15 30:23 27:16
 
 
 class ScoreContractTests(unittest.TestCase):
+    def test_real_prematch_planned_period_count_can_supply_volleyball_format(self):
+        widget={'statistics_id':'75208592','match':{'status':{'_id':0},'result':{'home':None,'away':None}},
+                'documents':[{'name':'match_info_statshub','fields':[{'path':'match._id','value':75208592},
+                    {'path':'match.numberofperiods','value':5}]}]}
+        self.assertEqual(score_winner('volleyball',SCORES['volleyball'],widget),('away',None))
+        for change in ({'status':{'_id':100}},{'status':None},{'result':{'home':0,'away':0}}):
+            unsafe=copy.deepcopy(widget);unsafe['match'].update(change)
+            self.assertEqual(score_winner('volleyball',SCORES['volleyball'],unsafe)[1],'best_of_unconfirmed')
+        wrong=copy.deepcopy(widget);wrong['documents'][0]['fields'][0]['value']=999
+        self.assertEqual(score_winner('volleyball',SCORES['volleyball'],wrong)[1],'best_of_unconfirmed')
+        conflict=copy.deepcopy(widget);conflict['match']['best_of']=3
+        self.assertEqual(score_winner('volleyball',SCORES['volleyball'],conflict)[1],'best_of_unconfirmed')
+        conflict['match']['best_of']=7
+        self.assertEqual(score_winner('volleyball',SCORES['volleyball'],conflict)[1],'best_of_unconfirmed')
+        tennis=copy.deepcopy(widget);tennis['documents'][0]['fields'][1]['value']=None
+        self.assertEqual(score_winner('tennis',SCORES['tennis'],tennis)[1],'best_of_unconfirmed')
+
     def test_best_of_fallback_is_bound_to_the_same_provider_match(self):
         widget={'statistics_id':'100','match':{},'documents':[{'name':'match_info_statshub',
             'fields':[{'path':'match._id','value':101},{'path':'match.bestof','value':3}]}]}
@@ -232,6 +249,53 @@ class TrainingPreparationTests(unittest.TestCase):
         for arguments in ({'valid_from':self.base.isoformat()}, {'valid_from':'2026-01-02','test_from':'2026-01-03'},
                           {'valid_from':self.base.isoformat(),'test_from':self.base.isoformat()}):
             with self.subTest(arguments=arguments),self.assertRaises(ValueError):prepare_training(self.state,self.finding,**arguments)
+        for limit in (-1,4,True):
+            with self.subTest(limit=limit),self.assertRaises(ValueError):
+                prepare_training(self.state,self.finding,diagnostic_examples=limit)
+
+    def test_format_diagnostics_are_bound_bounded_readonly_and_never_become_labels(self):
+        for identifier in ('1','2'):
+            self.sample(identifier,'tennis')
+        with closing(self.store.connect()) as db,db:
+            for row in db.execute('SELECT id,payload FROM samples').fetchall():
+                payload=json.loads(row['payload']);widget=payload['widget_data']
+                widget['match']['best_of']=None;widget['capture_id']='capture-'+payload['event']['source_event_id']
+                db.execute('UPDATE samples SET payload=?,sha256=? WHERE id=?',(encoded(payload),digest(payload),row['id']))
+        def packet(path,data,at,*,capture='capture-1',identifier='1'):
+            value={'format':'doscbot.widget-json.v1','binding':'observed_event_link','capture_id':capture,
+                   'statistics_id':'100'+identifier,'endpoint':{'path':path},'data':{'doc':[{'data':data}]}}
+            with patch('collector.store.now',return_value=at.isoformat()):
+                self.store.observation('widget_json',identifier,at.isoformat(),value)
+        prematch=self.base-timedelta(minutes=61)
+        target={'_id':1001,'bestof':None,'numberofperiods':None,'status':{'_id':0},'teams':{
+                'home':{'uid':'h'},'away':{'uid':'a'}},'result':{'home':None,'away':None}}
+        packet('/match_info_statshub/1001',{'match':target},prematch)
+        # The later capture must not replace the frozen pre-match context.
+        packet('/match_info_statshub/1001',{'match':{**target,'bestof':5}},prematch+timedelta(seconds=1),capture='other')
+        final={**target,'numberofperiods':None,'result':{'home':0,'away':2,'winner':'away','period':'ft'},
+               'retired':False,'walkover':False,'disqualified':False,'private_extra':'must not appear'}
+        packet('/stats_player_lastx/h/20',{'matches':[{**final,'_id':999},final]},self.base+timedelta(hours=4),identifier='other-event')
+        before=(self.state/'dataset.sqlite3').read_bytes()
+        report=prepare_training(self.state,self.finding,sports='tennis',diagnostic_examples=1)
+        self.assertEqual(report['labelled_events'],0)
+        self.assertEqual(report['sports']['tennis']['label_reasons'],{'best_of_unconfirmed':2})
+        examples=report['diagnostics']['examples'];self.assertEqual(len(examples),1)
+        self.assertEqual(examples[0]['event_id'],'1')
+        evidence={item['kind']:item for item in examples[0]['saved_source_context']}
+        self.assertEqual(set(evidence),{'frozen_capture','later_history'})
+        self.assertIsNone(evidence['frozen_capture']['match']['bestof'])
+        self.assertEqual(evidence['later_history']['match']['result']['winner'],'away')
+        self.assertTrue(evidence['later_history']['same_ordered_participant_ids'])
+        self.assertNotIn('private_extra',encoded(examples))
+        self.assertEqual((self.state/'dataset.sqlite3').read_bytes(),before)
+        # Future evidence is excluded at the training label cutoff, even from a newer snapshot.
+        earlier=prepare_training(self.state,self.finding,sports='tennis',diagnostic_examples=1,
+            valid_from=(self.base+timedelta(hours=3,minutes=30)).isoformat(),
+            test_from=(self.base+timedelta(days=1)).isoformat())
+        self.assertEqual([item['kind'] for item in earlier['diagnostics']['examples'][0]['saved_source_context']],['frozen_capture'])
+        ordinary=prepare_training(self.state,self.finding,sports='tennis')
+        self.assertNotIn('diagnostics',ordinary)
+        self.assertEqual(ordinary['sports'],report['sports'])
 
     def test_corrupt_linked_results_are_not_used_as_labels(self):
         self.sample()

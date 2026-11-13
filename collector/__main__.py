@@ -42,6 +42,8 @@ def main(argv=None):
     training.add_argument('--lead-minutes',type=int,default=60)
     training.add_argument('--valid-from',help='Timezone-aware validation boundary, e.g. 2026-12-01T00:00:00Z')
     training.add_argument('--test-from',help='Timezone-aware test boundary; all rows of an event stay together')
+    training.add_argument('--diagnostic-examples',type=int,default=0,
+                          help='0..3 saved examples per sport/reason (max 20); no network or automatic label fallback')
     snapshot=commands.add_parser('training-snapshot',help='Consistent standalone SQLite copy for another server; collection can continue')
     snapshot.add_argument('--output',type=Path,required=True,help='New directory outside collector data')
     fit=commands.add_parser('train-baseline',help='Experimental CPU CatBoost on a verified temporal training export')
@@ -95,7 +97,8 @@ def main(argv=None):
     if args.command=='prepare-training':
         from .training import prepare_training
         result=prepare_training(args.state_dir,args.finding,output=args.output,sports=args.sport,
-                                lead_minutes=args.lead_minutes,valid_from=args.valid_from,test_from=args.test_from)
+                                lead_minutes=args.lead_minutes,valid_from=args.valid_from,test_from=args.test_from,
+                                diagnostic_examples=args.diagnostic_examples)
         print(json.dumps(result,ensure_ascii=False,indent=2))
         return 0
     if args.command in ('audit','reset-data'):
