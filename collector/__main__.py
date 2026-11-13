@@ -53,6 +53,12 @@ def main(argv=None):
     fit.add_argument('--iterations',type=int,default=400)
     fit.add_argument('--depth',type=int,default=5)
     fit.add_argument('--max-rows',type=int,default=200000)
+    refit=commands.add_parser('train-all',help='Fit a NEW model on every available labelled event using fixed pilot parameters')
+    refit.add_argument('--dataset',type=Path,required=True,help='New prepare-training export without date boundaries')
+    refit.add_argument('--reference-model',type=Path,required=True,help='Preserved pilot directory with model and metrics')
+    refit.add_argument('--output',type=Path,required=True)
+    refit.add_argument('--threads',type=int,default=2)
+    refit.add_argument('--max-rows',type=int,default=200000)
     monitor = commands.add_parser("monitor", help="Read-only live terminal dashboard; runs alongside the collector")
     monitor.add_argument("--once", action="store_true", help="Print one snapshot without interactive screen")
     monitor.add_argument("--refresh", type=float, default=2, help="Refresh interval, seconds (0.5..60)")
@@ -83,6 +89,12 @@ def main(argv=None):
     collect.add_argument("--chromium", default=os.environ.get("CHROMIUM_EXECUTABLE") or
                         shutil.which("chromium") or shutil.which("chromium-browser"))
     args = parser.parse_args(argv)
+    if args.command=='train-all':
+        from .train_all import train_all
+        result=train_all(args.dataset,args.finding,args.reference_model,args.output,
+                         threads=args.threads,max_rows=args.max_rows)
+        print(json.dumps(result,ensure_ascii=False,indent=2))
+        return 0
     if args.command=='train-baseline':
         from .train_baseline import train_baseline
         result=train_baseline(args.dataset,args.finding,args.output,threads=args.threads,

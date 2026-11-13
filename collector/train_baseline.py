@@ -13,7 +13,7 @@ from .store import digest, encoded, instant, now
 from .training import SCHEMA
 
 
-def read_dataset(directory, max_rows):
+def read_dataset(directory, max_rows, *, all_available=False):
     directory=Path(directory).resolve()
     if any((directory/name).is_symlink() for name in ('manifest.json','schema.json','rows.jsonl')):
         raise ValueError('Refusing redirected training export files')
@@ -21,14 +21,21 @@ def read_dataset(directory, max_rows):
     schema=json.loads((directory/'schema.json').read_text())
     if schema!=SCHEMA or manifest.get('schema_sha256')!=digest(schema):
         raise ValueError('Unsupported or inconsistent training schema')
-    if not manifest.get('structurally_ready'):
-        raise ValueError('Prepare an export with valid temporal boundaries and labelled train/validation/test for each requested sport')
-    valid,test,checked=(instant(manifest[key]) for key in ('valid_from','test_from','checked_at'))
-    if not valid<test<=checked:raise ValueError('Invalid temporal boundaries')
+    checked=instant(manifest['checked_at'])
+    if all_available:
+        if (manifest.get('valid_from') is not None or manifest.get('test_from') is not None or
+                manifest.get('split_required') is not True):
+            raise ValueError('All-data training needs a fresh prepare-training export without temporal boundaries')
+        valid=test=None
+    else:
+        if not manifest.get('structurally_ready'):
+            raise ValueError('Prepare an export with valid temporal boundaries and labelled train/validation/test for each requested sport')
+        valid,test=(instant(manifest[key]) for key in ('valid_from','test_from'))
+        if not valid<test<=checked:raise ValueError('Invalid temporal boundaries')
     if type(manifest.get('lead_minutes')) is not int or not 0<=manifest['lead_minutes']<=10080:
         raise ValueError('Invalid prediction horizon')
     names=schema['categorical']+schema['numeric']+schema['missing_indicators']
-    folds={key:[] for key in ('train','validation','test')}; groups={}; checksum=hashlib.sha256();count=0
+    folds={key:[] for key in (('all',) if all_available else ('train','validation','test'))}; groups={}; checksum=hashlib.sha256();count=0
     with (directory/'rows.jsonl').open('rb') as handle:
         for line in handle:
             checksum.update(line);count+=1
@@ -37,8 +44,9 @@ def read_dataset(directory, max_rows):
             if row.get('format')!='doscbot.participant-training-row.v1' or set(features)!=set(names):
                 raise ValueError('Unexpected training row or feature columns')
             kickoff=instant(row['kickoff_at']);as_of=instant(row['as_of'])
-            partition='train' if kickoff<valid else 'validation' if kickoff<test else 'test'
-            if row['partition']!=partition or as_of>=kickoff or (kickoff-as_of).total_seconds()<manifest['lead_minutes']*60 or as_of>checked:
+            partition='all' if all_available else 'train' if kickoff<valid else 'validation' if kickoff<test else 'test'
+            expected_partition='unassigned' if all_available else partition
+            if row['partition']!=expected_partition or as_of>=kickoff or (kickoff-as_of).total_seconds()<manifest['lead_minutes']*60 or as_of>checked:
                 raise ValueError('Row violates temporal split or prediction horizon')
             key=str(row['event_group']);side=features['selection_side']
             identity=(partition,features['sport'],row['as_of'],row['kickoff_at'],row['sample_sha256'])
@@ -56,25 +64,28 @@ def read_dataset(directory, max_rows):
             label=row.get('target')
             if label is None:continue
             if type(label) is not int or label not in (0,1):raise ValueError('Target must be 0, 1 or null')
-            cutoff=valid if partition=='train' else test if partition=='validation' else checked
+            cutoff=checked if all_available else valid if partition=='train' else test if partition=='validation' else checked
             result=row.get('result') or {}
             if not result.get('received_at') or not kickoff<=instant(result['received_at'])<=cutoff:
                 raise ValueError('Result was not available at the declared fit/evaluation cutoff')
             data=[features[name] if features[name] is not None else float('nan') for name in names]
             folds[partition].append({'x':data,'y':label,'sport':features['sport'],'group':key,
-                'quality':features['capture_state'],'baseline':features['implied_selected']})
+                'quality':features['capture_state'],'baseline':features['implied_selected'],
+                'sample_sha256':row['sample_sha256'],'as_of':row['as_of'],
+                'kickoff_at':row['kickoff_at'],'label_received_at':result['received_at']})
     if checksum.hexdigest()!=manifest.get('rows_sha256') or count!=manifest.get('export_rows'):
         raise ValueError('Training rows checksum or count mismatch')
     if any(group['sides']!={'home','away'} or (None in group['labels'] and set(group['labels'])!={None}) for group in groups.values()):
         raise ValueError('Each match must have a consistent pair of participant rows')
     if any(None not in group['labels'] and sum(group['labels'])>1 for group in groups.values()):
         raise ValueError('Both participants cannot win the same market')
-    if not all(folds.values()) or {row['y'] for row in folds['train']}!={0,1}:
-        raise ValueError('Need labelled temporal folds and both target classes in training')
+    training=folds['all' if all_available else 'train']
+    if not all(folds.values()) or {row['y'] for row in training}!={0,1}:
+        raise ValueError('Need labelled data and both target classes in training')
     sports=set(manifest.get('requested_sports') or manifest.get('sports',{}))
     if not sports or any({row['sport'] for row in folds[fold]}!=sports for fold in folds):
         raise ValueError('Requested sports are missing from a labelled data partition')
-    if any({row['y'] for row in folds['train'] if row['sport']==sport}!={0,1} for sport in sports):
+    if any({row['y'] for row in training if row['sport']==sport}!={0,1} for sport in sports):
         raise ValueError('Each requested sport needs both train classes')
     return manifest,names,folds
 
