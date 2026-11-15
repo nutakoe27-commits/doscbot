@@ -53,6 +53,16 @@ def main(argv=None):
     fit.add_argument('--iterations',type=int,default=400)
     fit.add_argument('--depth',type=int,default=5)
     fit.add_argument('--max-rows',type=int,default=200000)
+    pack=commands.add_parser('package-statistics',help='Bundle a verified statistics model and its original input export')
+    pack.add_argument('--model',type=Path,required=True)
+    pack.add_argument('--output',type=Path,required=True)
+    stats=commands.add_parser('train-statistics',help='Fit price-blind statistics model with two separate admin experiment views')
+    stats.add_argument('--dataset',type=Path,required=True)
+    stats.add_argument('--output',type=Path,required=True)
+    stats.add_argument('--threads',type=int,default=2)
+    stats.add_argument('--iterations',type=int,default=200)
+    stats.add_argument('--depth',type=int,default=4)
+    stats.add_argument('--max-rows',type=int,default=200000)
     refit=commands.add_parser('train-all',help='Fit a NEW model on every available labelled event using fixed pilot parameters')
     refit.add_argument('--dataset',type=Path,required=True,help='New prepare-training export without date boundaries')
     refit.add_argument('--reference-model',type=Path,required=True,help='Preserved pilot directory with model and metrics')
@@ -107,6 +117,14 @@ def main(argv=None):
     if args.command=='score-predictions':
         from .model_evaluation import score_forecasts
         result=score_forecasts(args.state_dir,args.finding,args.predictions,args.output)
+        print(json.dumps(result,ensure_ascii=False,indent=2));return 0
+    if args.command=='package-statistics':
+        from .train_statistics import package_statistics
+        print(json.dumps(package_statistics(args.model,args.output),ensure_ascii=False,indent=2));return 0
+    if args.command=='train-statistics':
+        from .train_statistics import train_statistics
+        result=train_statistics(args.dataset,args.finding,args.output,threads=args.threads,
+                                iterations=args.iterations,depth=args.depth,max_rows=args.max_rows)
         print(json.dumps(result,ensure_ascii=False,indent=2));return 0
     if args.command=='train-all':
         from .train_all import train_all
