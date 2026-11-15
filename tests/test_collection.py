@@ -59,6 +59,22 @@ class CollectionTests(unittest.TestCase):
                 "SELECT payload FROM observations WHERE kind='market' ORDER BY id")]
         self.assertEqual(values, [2.0, 2.1])
 
+    def test_dictionary_retention_does_not_prune_event_or_market_history(self):
+        from collector.dictionary_retention import POLICY
+        with closing(self.store.connect()) as db,db:
+            db.execute("INSERT INTO metadata VALUES ('dictionary_retention',?)",(POLICY,))
+        sync_archive(self.store,self.source)
+        for second in (1,2,3):
+            self.data['lines'][0]['V'][0] += .1
+            if second==3:self.data['sports'][0]['name']='Football'
+            save_snapshot(self.db,self.capture,self.data,(self.at+timedelta(seconds=second)).isoformat())
+            sync_archive(self.store,self.source)
+        with closing(self.store.connect()) as db:
+            self.assertEqual(db.execute("SELECT count(*) FROM observations WHERE kind='sports'").fetchone()[0],1)
+            self.assertEqual(json.loads(db.execute("SELECT payload FROM observations WHERE kind='sports'").fetchone()[0])['name'],'Football')
+            self.assertEqual(db.execute("SELECT count(*) FROM observations WHERE kind='market'").fetchone()[0],4)
+            self.assertEqual(db.execute("SELECT count(*) FROM observations WHERE kind='event'").fetchone()[0],1)
+
     def test_native_results_keep_sport_and_are_not_features(self):
         result = {"idRadar": 600, "member1": "Команда А", "member2": "Команда В",
                   "date": (self.at - timedelta(days=1)).isoformat(), "score": "2:1"}

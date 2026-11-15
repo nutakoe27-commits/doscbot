@@ -48,6 +48,7 @@ HISTORY_TABLES = {
 
 def sync_archive(store, path):
     """Incremental, transactional copy from this collector's OWN fresh archive."""
+    from .dictionary_retention import enabled, observe_dictionary
     counts = {}
     with closing(source_connection(path)) as source, closing(store.connect()) as target:
         for table, (kind, keys) in HISTORY_TABLES.items():
@@ -77,10 +78,12 @@ def sync_archive(store, path):
         # Keep source dictionaries so unknown sport/market identifiers remain interpretable.
         latest = source.execute("SELECT observed_at FROM snapshots ORDER BY id DESC LIMIT 1").fetchone()
         if latest:
+            retain_dictionaries = enabled(target)
             with target:
                 for table in ("sports", "countries", "championships"):
                     for row in source.execute(f"SELECT id,raw_json FROM {table}"):
-                        store.observe(target, table, row["id"], latest[0], json.loads(row["raw_json"]))
+                        observe_dictionary(store, target, table, row["id"], latest[0],
+                                           json.loads(row["raw_json"]), retain=retain_dictionaries)
     return counts
 
 

@@ -44,6 +44,9 @@ def main(argv=None):
     training.add_argument('--test-from',help='Timezone-aware test boundary; all rows of an event stay together')
     training.add_argument('--diagnostic-examples',type=int,default=0,
                           help='0..3 saved examples per sport/reason (max 20); no network or automatic label fallback')
+    compact=commands.add_parser('compact-dictionaries',help='Preview or compact only redundant reference dictionaries; preserve all samples/evidence')
+    compact.add_argument('--apply',action='store_true')
+    compact.add_argument('--backup-output',type=Path,help='New complete backup outside collector state; required for apply')
     snapshot=commands.add_parser('training-snapshot',help='Consistent standalone SQLite copy for another server; collection can continue')
     snapshot.add_argument('--output',type=Path,required=True,help='New directory outside collector data')
     fit=commands.add_parser('train-baseline',help='Experimental CPU CatBoost on a verified temporal training export')
@@ -138,6 +141,10 @@ def main(argv=None):
                               iterations=args.iterations,depth=args.depth,max_rows=args.max_rows)
         print(json.dumps(result,ensure_ascii=False,indent=2))
         return 0
+    if args.command=='compact-dictionaries':
+        from .dictionary_retention import compact_dictionaries
+        result=compact_dictionaries(args.state_dir,args.finding,apply=args.apply,backup_output=args.backup_output)
+        print(json.dumps(result,ensure_ascii=False,indent=2));return 0
     if args.command=='training-snapshot':
         from .snapshot import training_snapshot
         result=training_snapshot(args.state_dir,args.finding,args.output)
