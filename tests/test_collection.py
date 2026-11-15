@@ -332,6 +332,79 @@ class CollectionTests(unittest.TestCase):
         self.assertEqual(details["source_exit_code"], 0)
         self.assertEqual(details["results"]["failed"], 1)
 
+    def test_catalogue_refresh_imports_real_changes_and_throttles(self):
+        from collector.live import CatalogueRefresh
+        save_snapshot(self.db, self.capture, self.data, self.stamp)
+        counts = {}
+        def capture(*args, **kwargs):
+            self.assertEqual(kwargs["timeout_seconds"], 90)
+            data = {**self.data, "events": [{**self.data["events"][0], "id": 102}]}
+            save_snapshot(self.db, self.capture, data, self.stamp)
+            return 0
+        with patch("collector.live.time.monotonic", return_value=0) as clock, \
+             patch("collector.live.run_source", side_effect=capture) as run:
+            refresh = CatalogueRefresh(self.store, self.source, [], FINDING, {}, lambda: False, counts)
+            clock.return_value = 119
+            refresh.refresh()
+            run.assert_not_called()
+            clock.return_value = 120
+            refresh.refresh()
+            self.assertEqual(refresh.attempts[0]["state"], "new_snapshot")
+            self.assertEqual(refresh.attempts[0]["observed_at"], self.stamp)
+            self.assertGreater(counts["event"], 0)
+            refresh.refresh()
+            run.assert_called_once()
+
+    def test_catalogue_refresh_failure_does_not_retimestamp_old_snapshot(self):
+        from collector.live import CatalogueRefresh
+        save_snapshot(self.db, self.capture, self.data, self.stamp)
+        before = self.db.execute("SELECT count(*) FROM snapshots").fetchone()[0]
+        with patch("collector.live.time.monotonic", return_value=0) as clock, \
+             patch("collector.live.run_source", return_value=124) as run:
+            refresh = CatalogueRefresh(self.store, self.source, [], FINDING, {}, lambda: False, {})
+            clock.return_value = 121
+            refresh.refresh()
+            self.assertEqual(refresh.attempts[0]["state"], "no_new_snapshot")
+            self.assertEqual(refresh.attempts[0]["observed_at"], self.stamp)
+            self.assertEqual(self.db.execute("SELECT count(*) FROM snapshots").fetchone()[0], before)
+            clock.return_value = 122
+            refresh.refresh()
+            run.assert_called_once()
+            refresh.stopped = lambda: True
+            clock.return_value = 500
+            refresh.refresh()
+            run.assert_called_once()
+
+    def test_long_cycle_refreshes_between_details_and_after_results(self):
+        from collector.live import cycle
+        state = self.folder / "refresh-cycle"
+        clock_value = [0]
+        calls = []
+        def capture(*args, **kwargs):
+            calls.append(clock_value[0])
+            with closing(connect(state / "source/winline.sqlite3")) as db:
+                capture_id = db.execute("INSERT INTO captures(started_at,url) VALUES (?,?)",
+                                       (self.stamp, "https://winline.ru/")).lastrowid
+                db.commit()
+                save_snapshot(db, capture_id, self.data, self.stamp)
+            return 0
+        async def details(*args, **kwargs):
+            clock_value[0] = 130
+            await kwargs["refresh_catalogue"]()
+            return {"samples": 1, "errors": []}
+        async def results(*args, **kwargs):
+            clock_value[0] = 400
+            return {"state": "ok"}
+        with patch("collector.live.time.monotonic", side_effect=lambda: clock_value[0]), \
+             patch("collector.live.run_source", side_effect=capture), \
+             patch("collector.live.collect_details", side_effect=details), \
+             patch("collector.results.collect_results", side_effect=results):
+            self.assertTrue(cycle(self.store, state, FINDING, None, "football", 1, 2))
+        self.assertEqual(calls, [0, 130, 400])
+        report = json.loads(self.store.status()["last_run"]["details"])
+        self.assertEqual(len(report["catalogue_refreshes"]), 2)
+        self.assertEqual(report["samples"], 1)
+
     def test_recorded_finished_statistics_never_become_prematch_samples(self):
         fixture = json.loads((FINDING / "tests/fixtures/team_statistics_projection.json").read_text())
         event, _ = self.sample_inputs()

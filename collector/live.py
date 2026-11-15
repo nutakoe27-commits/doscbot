@@ -27,7 +27,7 @@ def browser_options(chromium, headed=False):
     return options
 
 
-async def collect_details(store, archive, chromium, sport, limit, *, headed=False, event_id=None, widget_budget=120, stopped=lambda: False):
+async def collect_details(store, archive, chromium, sport, limit, *, headed=False, event_id=None, widget_budget=120, stopped=lambda: False, refresh_catalogue=None):
     from playwright.async_api import async_playwright
     from matchlab.statistics import collect_statistics, validate_statistics
     from matchlab.winline_markets import ensure_event_page, read_marketbook, market_document
@@ -196,15 +196,17 @@ async def collect_details(store, archive, chromium, sport, limit, *, headed=Fals
                     store.observation('event_diagnostic',event['source_event_id'],attempt['finished_at'],attempt)
                     await page.close()
                     update_runtime(store, completed=index+1)
+                    if refresh_catalogue is not None and not stopped():
+                        await refresh_catalogue()
                 await asyncio.sleep(1)
         finally:
             await browser.close()
     return result
 
 
-def run_source(command, finding, environment, stopped):
+def run_source(command, finding, environment, stopped, *, timeout_seconds=600):
     process = subprocess.Popen(command, cwd=finding, env=environment, start_new_session=True)
-    deadline = time.monotonic() + 600
+    deadline = time.monotonic() + timeout_seconds
     try:
         while process.poll() is None:
             if stopped() or time.monotonic() >= deadline:
@@ -221,6 +223,45 @@ def run_source(command, finding, environment, stopped):
         if process.poll() is None:
             os.killpg(process.pid, signal.SIGKILL)
             process.wait()
+
+
+class CatalogueRefresh:
+    """Serial, bounded captures between details; never manufacture freshness."""
+
+    def __init__(self, store, archive, command, finding, environment, stopped, counts):
+        self.store, self.archive = store, archive
+        self.command, self.finding, self.environment = command, finding, environment
+        self.stopped, self.counts = stopped, counts
+        self.last_attempt = time.monotonic()
+        self.attempts = []
+
+    def refresh(self):
+        if self.stopped() or time.monotonic() - self.last_attempt < 120:
+            return
+        diagnostic = {"started_at": now()}
+        try:
+            with closing(source_connection(self.archive)) as db:
+                before = db.execute("SELECT coalesce(max(id),0) FROM snapshots").fetchone()[0]
+            code = run_source(self.command, self.finding, self.environment, self.stopped,
+                              timeout_seconds=90)
+            with closing(source_connection(self.archive)) as db:
+                row = db.execute("SELECT id,observed_at FROM snapshots ORDER BY id DESC LIMIT 1").fetchone()
+            diagnostic.update(source_exit_code=code, snapshot_id=row[0] if row else None,
+                              observed_at=row[1] if row else None,
+                              state="new_snapshot" if row and row[0] > before else "no_new_snapshot")
+            # Import any real changes even if the capture exited unsuccessfully.
+            for kind, count in sync_archive(self.store, self.archive).items():
+                self.counts[kind] = self.counts.get(kind, 0) + count
+        except Exception as error:
+            diagnostic.update(state="error", error_type=type(error).__name__)
+        finally:
+            self.last_attempt = time.monotonic()
+            diagnostic["finished_at"] = now()
+            self.attempts.append(diagnostic)
+
+    async def between_details(self):
+        # No browser/detail writes run concurrently with this callback.
+        await asyncio.to_thread(self.refresh)
 
 
 def cycle(store, state_dir, finding, chromium, sport, limit, history_days, stopped=lambda: False,
@@ -264,8 +305,9 @@ def cycle(store, state_dir, finding, chromium, sport, limit, history_days, stopp
                        "reason": "no_new_source_snapshot"}
             store.finish_run(run, "source_error", details)
             return False
+        refresh = CatalogueRefresh(store, archive, command, finding, environment, stopped, counts)
         details = asyncio.run(collect_details(store, archive, chromium, sport, limit, headed=headed, event_id=event_id,
-                                            widget_budget=widget_budget,stopped=stopped))
+                                            widget_budget=widget_budget,stopped=stopped,refresh_catalogue=refresh.between_details))
         if history_days and not stopped():
             from .results import collect_results
             update_runtime(store, phase="results", current_match=None, completed=0, total=0)
@@ -285,12 +327,16 @@ def cycle(store, state_dir, finding, chromium, sport, limit, history_days, stopp
                 details["outcomes"] = sync_outcomes(store, archive)
             except Exception as error:
                 details["outcomes"] = {"state": "error", "error": type(error).__name__}
+        refresh.refresh()
+        details["catalogue_refreshes"] = refresh.attempts
         details["details_browser"] = "headed" if headed else "headless"
         details["source_exit_code"] = code
         details["imported_new_observations"] = counts
         state = "ok" if details["samples"] else "partial"
         if (details["errors"] or code or details.get("results", {}).get("state", "ok") != "ok"
-                or details.get("outcomes", {}).get("state") == "error"):
+                or details.get("outcomes", {}).get("state") == "error"
+                or any(item["state"] != "new_snapshot" or item.get("source_exit_code")
+                       for item in refresh.attempts)):
             state = "partial"
         store.finish_run(run, state, details)
         return state == "ok"
