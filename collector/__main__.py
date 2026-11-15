@@ -66,6 +66,7 @@ def main(argv=None):
     stats.add_argument('--iterations',type=int,default=200)
     stats.add_argument('--depth',type=int,default=4)
     stats.add_argument('--max-rows',type=int,default=200000)
+    stats.add_argument('--decision-mode',choices=('primary_llm.v1','price_gate.v1'),default='primary_llm.v1')
     refit=commands.add_parser('train-all',help='Fit a NEW model on every available labelled event using fixed pilot parameters')
     refit.add_argument('--dataset',type=Path,required=True,help='New prepare-training export without date boundaries')
     refit.add_argument('--reference-model',type=Path,required=True,help='Preserved pilot directory with model and metrics')
@@ -127,7 +128,7 @@ def main(argv=None):
     if args.command=='train-statistics':
         from .train_statistics import train_statistics
         result=train_statistics(args.dataset,args.finding,args.output,threads=args.threads,
-                                iterations=args.iterations,depth=args.depth,max_rows=args.max_rows)
+                                iterations=args.iterations,depth=args.depth,max_rows=args.max_rows,decision_mode=args.decision_mode)
         print(json.dumps(result,ensure_ascii=False,indent=2));return 0
     if args.command=='train-all':
         from .train_all import train_all

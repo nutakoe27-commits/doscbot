@@ -81,6 +81,7 @@ class StatisticsFitTests(unittest.TestCase):
                 'rows_sha256':hashlib.sha256(raw).hexdigest(),'export_rows':len(rows),'requested_sports':['football','hockey','basketball','volleyball','tennis'],'preparation_code_sha256':'fixture'}
             (dataset/'manifest.json').write_text(encoded(manifest));output=root/'model'
             result=train_statistics(dataset,root/'finding',output,threads=1,iterations=10,depth=2)
+            self.assertEqual(result['decision_mode'],'primary_llm.v1');self.assertIsNone(result['decision_policy'])
             self.assertEqual(result['training_events'],8);self.assertEqual(result['unsupported_sports'],['tennis'])
             self.assertIsNone(result['holdout_evaluation']);self.assertEqual(set(result['evaluation']),{'training'})
             model=CatBoostClassifier();model.load_model(str(output/'model.cbm'))

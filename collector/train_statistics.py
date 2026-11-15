@@ -12,9 +12,10 @@ from .train_all import file_sha256
 from . import statistics_contract as contract
 
 
-def train_statistics(dataset,finding,output,*,threads=2,iterations=200,depth=4,max_rows=200000):
+def train_statistics(dataset,finding,output,*,threads=2,iterations=200,depth=4,max_rows=200000,decision_mode="primary_llm.v1"):
     if any(type(v) is not int for v in (threads,iterations,depth,max_rows)) or not 1<=threads<=16 or not 10<=iterations<=2000 or not 2<=depth<=8 or not 10<=max_rows<=2000000:
         raise ValueError('Invalid CPU training bounds')
+    if decision_mode not in ('primary_llm.v1','price_gate.v1'):raise ValueError('Unknown decision mode')
     dataset,finding,output=(Path(p).resolve() for p in (dataset,finding,output))
     if output.exists() or any(p==finding or finding in p.parents or p in finding.parents for p in (dataset,output)) or output in dataset.parents or dataset in output.parents:
         raise ValueError('Use a new model directory outside finding and the dataset')
@@ -41,7 +42,7 @@ def train_statistics(dataset,finding,output,*,threads=2,iterations=200,depth=4,m
     model.fit(pool)
     probabilities=model.predict_proba(pool)[:,1].tolist()
     report={'format':'doscbot.statistics-model.v1','stage':'experimental_all_data','target':'participant_win.v1',
-        'feature_profile':contract.PROFILE,'started_at':started,'finished_at':now(),'packages':{'catboost':version('catboost')},
+        'feature_profile':contract.PROFILE,'decision_mode':decision_mode,'started_at':started,'finished_at':now(),'packages':{'catboost':version('catboost')},
         'parameters':{'iterations':iterations,'depth':depth,'learning_rate':.05,'seed':42,'threads':threads,'device':'CPU','initialization':'from_scratch'},
         'tree_count':model.tree_count_,'dataset_directory':str(dataset),'dataset_rows_sha256':manifest['rows_sha256'],
         'schema_sha256':digest(contract.SCHEMA),'preparation_code_sha256':manifest['preparation_code_sha256'],
@@ -50,11 +51,11 @@ def train_statistics(dataset,finding,output,*,threads=2,iterations=200,depth=4,m
         'excluded_insufficient_statistics_events':{s:n//2 for s,n in excluded.items()},
         'unsupported_sports':sorted(set(manifest['requested_sports'])-set(counts)),'sports':dict(counts),'sport_weights':weights,
         'evaluation':{'training':evaluate(rows,probabilities)},'holdout_evaluation':None,'needs_future_evaluation':True,
-        'validated_for_betting':False,'decision_policy':contract.DEFAULT_POLICY,
+        'validated_for_betting':False,'decision_policy':contract.DEFAULT_POLICY if decision_mode=='price_gate.v1' else None,
         'warnings':['Training fit is not future accuracy. Evaluate new matches only.',
-                    'No prices or market-derived features enter CatBoost. Prices are used after prediction for the frozen paper policy.',
+                    'No prices or market-derived features enter CatBoost. Prices are used only after prediction.',
                     'Normal-period labels only. Both participants require verified history/season statistics.',
-                    'Policy thresholds are fixed experimental defaults, not calibrated profitability guarantees.']}
+                    'The primary site LLM decides independently after prediction; no fixed probability/edge thresholds.' if decision_mode=='primary_llm.v1' else 'Policy thresholds are fixed experimental defaults, not calibrated profitability guarantees.']}
     output.mkdir(parents=True,exist_ok=False)
     try:
         model.save_model(str(output/'model.cbm'));report['model_sha256']=file_sha256(output/'model.cbm')
