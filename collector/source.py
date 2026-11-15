@@ -87,7 +87,7 @@ def sync_archive(store, path):
     return counts
 
 
-def candidates(path, sport, limit, cutoff, last_attempts=None, event_id=None, link_statuses=None):
+def candidates(path, sport, limit, cutoff, last_attempts=None, event_id=None, link_statuses=None, model_priority=None):
     """Only source-observed upcoming matches; no guessed statistics IDs."""
     from matchlab.archive import sport_key
     from matchlab.sports import match_url
@@ -135,4 +135,5 @@ def candidates(path, sport, limit, cutoff, last_attempts=None, event_id=None, li
         due = not attempted or instant(attempted) <= refresh_before
         return (0 if promising and due else 1, attempted, instant(event['kickoff_at']))
     selected.sort(key=priority)
-    return balanced(selected, limit)
+    from .model_priority import select
+    return select(selected, limit, cutoff, last_attempts, model_priority)

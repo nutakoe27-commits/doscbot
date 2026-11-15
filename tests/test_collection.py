@@ -235,6 +235,16 @@ class CollectionTests(unittest.TestCase):
         picked = candidates(self.source, "football", 1, self.stamp, {"100": self.stamp})
         self.assertEqual(picked[0]["source_event_id"], "101")
 
+    def test_model_priority_reaches_candidate_selection(self):
+        self.data['events'].append({**self.data['events'][0], 'id':101,
+                                   'date':(self.at+timedelta(hours=3)).isoformat()})
+        save_snapshot(self.db,self.capture,self.data,self.stamp)
+        hint={'sports':{'football'},'excluded_events':{'100'}}
+        picked=candidates(self.source,'football',1,self.stamp,model_priority=hint)
+        self.assertEqual(picked[0]['source_event_id'],'101')
+        picked=candidates(self.source,'football',1,self.stamp,event_id='100',model_priority=hint)
+        self.assertEqual(picked[0]['source_event_id'],'100')
+
     def test_explicit_event_is_never_replaced_by_another_candidate(self):
         self.data["events"].append({**self.data["events"][0], "id": 101})
         save_snapshot(self.db, self.capture, self.data, self.stamp)
